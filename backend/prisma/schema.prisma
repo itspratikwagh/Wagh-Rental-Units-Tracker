@@ -1,0 +1,60 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Property {
+  id          String     @id @default(uuid())
+  name        String
+  address     String
+  type        String
+  units       Int
+  rentAmount  Float
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+  tenants     Tenant[]
+  expenses    Expense[]
+}
+
+model Tenant {
+  id          String     @id @default(uuid())
+  name        String
+  email       String
+  phone       String
+  propertyId  String
+  property    Property   @relation(fields: [propertyId], references: [id])
+  rentAmount  Float
+  leaseStart  DateTime
+  leaseEnd    DateTime
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+  payments    Payment[]
+}
+
+model Payment {
+  id            String   @id @default(uuid())
+  tenantId      String
+  tenant        Tenant   @relation(fields: [tenantId], references: [id])
+  amount        Float
+  date          DateTime
+  paymentMethod String
+  notes         String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+}
+
+model Expense {
+  id          String   @id @default(uuid())
+  propertyId  String
+  property    Property @relation(fields: [propertyId], references: [id])
+  amount      Float
+  date        DateTime
+  category    String
+  description String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+} 

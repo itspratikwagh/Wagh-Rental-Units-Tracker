@@ -1,0 +1,63 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Property {
+  id          String    @id @default(uuid())
+  address     String
+  city        String
+  province    String
+  postalCode  String
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  tenants     Tenant[]
+  expenses    Expense[]
+}
+
+model Tenant {
+  id            String    @id @default(uuid())
+  firstName     String
+  lastName      String
+  email         String?
+  phone         String?
+  leaseStart    DateTime
+  leaseEnd      DateTime
+  rentAmount    Float
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  propertyId    String
+  property      Property  @relation(fields: [propertyId], references: [id])
+  payments      Payment[]
+}
+
+model Payment {
+  id          String    @id @default(uuid())
+  amount      Float
+  paymentDate DateTime
+  paymentType String    // e.g., "RENT", "DEPOSIT", "LATE_FEE"
+  status      String    // e.g., "PAID", "PENDING", "OVERDUE"
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  tenantId    String
+  tenant      Tenant    @relation(fields: [tenantId], references: [id])
+}
+
+model Expense {
+  id          String    @id @default(uuid())
+  amount      Float
+  description String
+  category    String    // e.g., "MAINTENANCE", "UTILITIES", "REPAIRS"
+  date        DateTime
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  propertyId  String
+  property    Property  @relation(fields: [propertyId], references: [id])
+}
