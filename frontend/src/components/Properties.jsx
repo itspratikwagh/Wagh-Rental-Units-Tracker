@@ -13,6 +13,7 @@ import {
   Card,
   CardContent,
 } from '@mui/material';
+import config from '../config';
 
 const Properties = () => {
   const [properties, setProperties] = useState([]);
@@ -31,7 +32,7 @@ const Properties = () => {
 
   const fetchProperties = async () => {
     try {
-      const response = await fetch('http://localhost:3003/api/properties');
+      const response = await fetch(`${config.apiUrl}/api/properties`);
       const data = await response.json();
       setProperties(data);
     } catch (error) {
@@ -52,7 +53,7 @@ const Properties = () => {
   const handleSubmit = async (e) => {
     e.preventDefault();
     try {
-      const response = await fetch('http://localhost:3003/api/properties', {
+      const response = await fetch(`${config.apiUrl}/api/properties`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -71,7 +72,7 @@ const Properties = () => {
         });
       }
     } catch (error) {
-      console.error('Error creating property:', error);
+      console.error('Error adding property:', error);
     }
   };
 
