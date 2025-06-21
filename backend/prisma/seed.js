@@ -5,15 +5,15 @@ async function main() {
   // Create the Edmonton property
   const edmontonProperty = await prisma.property.create({
     data: {
-      address: '123 Main Street',
-      city: 'Edmonton',
-      province: 'Alberta',
-      postalCode: 'T5J 2K1',
+      name: 'Edmonton Main Street Apartments',
+      address: '123 Main Street, Edmonton, Alberta T5J 2K1',
+      type: 'Apartment Building',
+      units: 4,
+      rentAmount: 1500.00,
       tenants: {
         create: [
           {
-            firstName: 'John',
-            lastName: 'Doe',
+            name: 'John Doe',
             email: 'john.doe@example.com',
             phone: '780-555-0123',
             leaseStart: new Date('2024-01-01'),
@@ -21,8 +21,7 @@ async function main() {
             rentAmount: 1500.00,
           },
           {
-            firstName: 'Jane',
-            lastName: 'Smith',
+            name: 'Jane Smith',
             email: 'jane.smith@example.com',
             phone: '780-555-0124',
             leaseStart: new Date('2024-02-01'),
@@ -30,8 +29,7 @@ async function main() {
             rentAmount: 1600.00,
           },
           {
-            firstName: 'Mike',
-            lastName: 'Johnson',
+            name: 'Mike Johnson',
             email: 'mike.johnson@example.com',
             phone: '780-555-0125',
             leaseStart: new Date('2024-03-01'),
@@ -39,8 +37,7 @@ async function main() {
             rentAmount: 1550.00,
           },
           {
-            firstName: 'Sarah',
-            lastName: 'Williams',
+            name: 'Sarah Williams',
             email: 'sarah.williams@example.com',
             phone: '780-555-0126',
             leaseStart: new Date('2024-04-01'),

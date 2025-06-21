@@ -13,7 +13,6 @@ model Property {
   address     String
   type        String
   units       Int
-  rentAmount  Float
   createdAt   DateTime   @default(now())
   updatedAt   DateTime   @updatedAt
   tenants     Tenant[]
@@ -30,9 +29,11 @@ model Tenant {
   rentAmount  Float
   leaseStart  DateTime
   leaseEnd    DateTime
+  isArchived  Boolean  @default(false)
   createdAt   DateTime   @default(now())
   updatedAt   DateTime   @updatedAt
   payments    Payment[]
+  expenses    Expense[]
 }
 
 model Payment {
@@ -49,12 +50,14 @@ model Payment {
 
 model Expense {
   id          String   @id @default(uuid())
-  propertyId  String
-  property    Property @relation(fields: [propertyId], references: [id])
+  description String
   amount      Float
   date        DateTime
   category    String
-  description String?
+  propertyId  String
+  property    Property @relation(fields: [propertyId], references: [id])
+  tenantId    String?
+  tenant      Tenant?  @relation(fields: [tenantId], references: [id])
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 } 
