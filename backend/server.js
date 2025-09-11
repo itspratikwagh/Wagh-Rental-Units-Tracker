@@ -315,6 +315,67 @@ app.delete('/api/payments/:id', async (req, res) => {
   }
 });
 
+// Update a payment
+app.put('/api/payments/:id', async (req, res) => {
+  try {
+    const { tenantId, amount, date, paymentMethod, notes } = req.body;
+
+    // Validate required fields
+    if (!tenantId || !amount || !date || !paymentMethod) {
+      return res.status(400).json({ 
+        error: 'Missing required fields',
+        details: {
+          tenantId: !tenantId ? 'Tenant ID is required' : null,
+          amount: !amount ? 'Amount is required' : null,
+          date: !date ? 'Date is required' : null,
+          paymentMethod: !paymentMethod ? 'Payment method is required' : null
+        }
+      });
+    }
+
+    // Validate amount is a number
+    const parsedAmount = parseFloat(amount);
+    if (isNaN(parsedAmount) || parsedAmount <= 0) {
+      return res.status(400).json({ 
+        error: 'Invalid amount',
+        details: 'Amount must be a positive number'
+      });
+    }
+
+    // Check if payment exists
+    const existingPayment = await prisma.payment.findUnique({
+      where: { id: req.params.id },
+    });
+
+    if (!existingPayment) {
+      return res.status(404).json({ error: 'Payment not found' });
+    }
+
+    // Update the payment
+    const payment = await prisma.payment.update({
+      where: { id: req.params.id },
+      data: {
+        tenantId,
+        amount: parsedAmount,
+        date: new Date(date),
+        paymentMethod,
+        notes: notes || null
+      },
+      include: {
+        tenant: true,
+      },
+    });
+
+    res.json(payment);
+  } catch (error) {
+    console.error('Error updating payment:', error);
+    res.status(500).json({ 
+      error: 'Failed to update payment',
+      details: error.message 
+    });
+  }
+});
+
 // Get all expenses
 app.get('/api/expenses', async (req, res) => {
   try {

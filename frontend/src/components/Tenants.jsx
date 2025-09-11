@@ -15,14 +15,18 @@ import {
   MenuItem,
   IconButton,
   CardActions,
-  Tabs,
-  Tab,
   Alert,
+  Chip,
+  FormControl,
+  InputLabel,
+  Select,
+  Stack,
 } from '@mui/material';
 import EditIcon from '@mui/icons-material/Edit';
 import DeleteIcon from '@mui/icons-material/Delete';
 import ArchiveIcon from '@mui/icons-material/Archive';
 import UnarchiveIcon from '@mui/icons-material/Unarchive';
+import FilterListIcon from '@mui/icons-material/FilterList';
 import config from '../config';
 
 const Tenants = () => {
@@ -32,7 +36,8 @@ const Tenants = () => {
   const [editOpen, setEditOpen] = useState(false);
   const [editingTenant, setEditingTenant] = useState(null);
   const [error, setError] = useState(null);
-  const [tabValue, setTabValue] = useState(0);
+  const [statusFilter, setStatusFilter] = useState('all');
+  const [propertyFilter, setPropertyFilter] = useState('all');
   const [newTenant, setNewTenant] = useState({
     name: '',
     email: '',
@@ -46,18 +51,36 @@ const Tenants = () => {
   useEffect(() => {
     fetchTenants();
     fetchProperties();
-  }, [tabValue]);
+  }, []);
 
   const fetchTenants = async () => {
     try {
       setError(null);
-      const includeArchived = tabValue === 1;
-      const response = await fetch(`${config.apiUrl}/api/tenants?includeArchived=${includeArchived}`);
-      if (!response.ok) {
+      
+      // Make two separate calls to work around backend API issue
+      const [currentResponse, archivedResponse] = await Promise.all([
+        fetch(`${config.apiUrl}/api/tenants`),
+        fetch(`${config.apiUrl}/api/tenants?includeArchived=true`)
+      ]);
+      
+      if (!currentResponse.ok || !archivedResponse.ok) {
         throw new Error('Failed to fetch tenants');
       }
-      const data = await response.json();
-      setTenants(data);
+      
+      const currentTenants = await currentResponse.json();
+      const archivedTenants = await archivedResponse.json();
+      
+      // Combine and deduplicate tenants
+      const allTenants = [...currentTenants];
+      
+      // Add archived tenants that aren't already in the current list
+      archivedTenants.forEach(archivedTenant => {
+        if (!allTenants.find(tenant => tenant.id === archivedTenant.id)) {
+          allTenants.push(archivedTenant);
+        }
+      });
+      
+      setTenants(allTenants);
     } catch (error) {
       console.error('Error fetching tenants:', error);
       setError('Failed to load tenants. Please try again later.');
@@ -240,9 +263,43 @@ const Tenants = () => {
     }
   };
 
-  const handleTabChange = (event, newValue) => {
-    setTabValue(newValue);
+  const handleStatusFilterChange = (event) => {
+    setStatusFilter(event.target.value);
   };
+
+  const handlePropertyFilterChange = (event) => {
+    setPropertyFilter(event.target.value);
+  };
+
+  const getFilteredTenants = () => {
+    let filtered = [...tenants];
+
+    // Filter by status
+    if (statusFilter !== 'all') {
+      const isArchived = statusFilter === 'archived';
+      filtered = filtered.filter(tenant => tenant.isArchived === isArchived);
+    }
+
+    // Filter by property
+    if (propertyFilter !== 'all') {
+      filtered = filtered.filter(tenant => tenant.propertyId === propertyFilter);
+    }
+
+    // Sort by name
+    return filtered.sort((a, b) => a.name.localeCompare(b.name));
+  };
+
+  const getStatusChipColor = (isArchived) => {
+    return isArchived ? 'default' : 'success';
+  };
+
+  const getStatusChipLabel = (isArchived) => {
+    return isArchived ? 'Archived' : 'Current';
+  };
+
+  const filteredTenants = getFilteredTenants();
+  const currentCount = tenants.filter(t => !t.isArchived).length;
+  const archivedCount = tenants.filter(t => t.isArchived).length;
 
   return (
     <Container maxWidth="lg">
@@ -262,19 +319,67 @@ const Tenants = () => {
           </Alert>
         )}
 
-        <Tabs value={tabValue} onChange={handleTabChange} sx={{ mb: 3 }}>
-          <Tab label="Current Tenants" />
-          <Tab label="Archived Tenants" />
-        </Tabs>
+        {/* Filters */}
+        <Box sx={{ mb: 3, p: 2, bgcolor: 'background.paper', borderRadius: 1, border: 1, borderColor: 'divider' }}>
+          <Stack direction="row" spacing={2} alignItems="center" sx={{ mb: 2 }}>
+            <FilterListIcon color="action" />
+            <Typography variant="h6">Filters</Typography>
+          </Stack>
+          <Grid container spacing={2} alignItems="center">
+            <Grid item xs={12} sm={6} md={3}>
+              <FormControl fullWidth>
+                <InputLabel>Status</InputLabel>
+                <Select
+                  value={statusFilter}
+                  label="Status"
+                  onChange={handleStatusFilterChange}
+                >
+                  <MenuItem value="all">All Tenants ({tenants.length})</MenuItem>
+                  <MenuItem value="current">Current ({currentCount})</MenuItem>
+                  <MenuItem value="archived">Archived ({archivedCount})</MenuItem>
+                </Select>
+              </FormControl>
+            </Grid>
+            <Grid item xs={12} sm={6} md={3}>
+              <FormControl fullWidth>
+                <InputLabel>Property</InputLabel>
+                <Select
+                  value={propertyFilter}
+                  label="Property"
+                  onChange={handlePropertyFilterChange}
+                >
+                  <MenuItem value="all">All Properties</MenuItem>
+                  {properties.map((property) => (
+                    <MenuItem key={property.id} value={property.id}>
+                      {property.name}
+                    </MenuItem>
+                  ))}
+                </Select>
+              </FormControl>
+            </Grid>
+            <Grid item xs={12} md={6}>
+              <Typography variant="body2" color="text.secondary">
+                Showing {filteredTenants.length} of {tenants.length} tenants
+              </Typography>
+            </Grid>
+          </Grid>
+        </Box>
 
         <Grid container spacing={3}>
-          {tenants.map((tenant) => (
+          {filteredTenants.map((tenant) => (
             <Grid item xs={12} sm={6} md={4} key={tenant.id}>
               <Card>
                 <CardContent>
-                  <Typography variant="h6" gutterBottom>
-                    {tenant.name}
-                  </Typography>
+                  <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', mb: 1 }}>
+                    <Typography variant="h6" gutterBottom>
+                      {tenant.name}
+                    </Typography>
+                    <Chip
+                      label={getStatusChipLabel(tenant.isArchived)}
+                      color={getStatusChipColor(tenant.isArchived)}
+                      size="small"
+                    />
+                  </Box>
                   <Typography color="textSecondary" gutterBottom>
                     {tenant.email}
                   </Typography>

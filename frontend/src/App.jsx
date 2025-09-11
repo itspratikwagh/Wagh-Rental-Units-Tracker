@@ -1,4 +1,4 @@
-import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, Link as RouterLink } from 'react-router-dom';
 import { ThemeProvider, createTheme } from '@mui/material/styles';
 import CssBaseline from '@mui/material/CssBaseline';
 import Box from '@mui/material/Box';
@@ -52,11 +52,11 @@ function App() {
                 Wagh Rental Units Tracker
               </Typography>
               <Box sx={{ display: 'flex', gap: 2 }}>
-                <Link href="/" color="inherit">Dashboard</Link>
-                <Link href="/properties" color="inherit">Properties</Link>
-                <Link href="/tenants" color="inherit">Tenants</Link>
-                <Link href="/payments" color="inherit">Payments</Link>
-                <Link href="/expenses" color="inherit">Expenses</Link>
+                <Link component={RouterLink} to="/" color="inherit">Dashboard</Link>
+                <Link component={RouterLink} to="/properties" color="inherit">Properties</Link>
+                <Link component={RouterLink} to="/tenants" color="inherit">Tenants</Link>
+                <Link component={RouterLink} to="/payments" color="inherit">Payments</Link>
+                <Link component={RouterLink} to="/expenses" color="inherit">Expenses</Link>
               </Box>
             </Toolbar>
           </AppBar>

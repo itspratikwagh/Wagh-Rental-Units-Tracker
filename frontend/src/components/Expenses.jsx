@@ -18,9 +18,24 @@ import {
   TableHead,
   TableRow,
   Paper,
+  FormControl,
+  InputLabel,
+  Select,
+  Grid,
+  Alert,
+  Chip,
+  Stack,
+  Card,
+  CardContent,
 } from '@mui/material';
 import EditIcon from '@mui/icons-material/Edit';
 import DeleteIcon from '@mui/icons-material/Delete';
+import SearchIcon from '@mui/icons-material/Search';
+import FilterListIcon from '@mui/icons-material/FilterList';
+import TrendingUpIcon from '@mui/icons-material/TrendingUp';
+import CategoryIcon from '@mui/icons-material/Category';
+import HomeIcon from '@mui/icons-material/Home';
+import config from '../config';
 
 const EXPENSE_CATEGORIES = [
   'Mortgage',
@@ -40,6 +55,10 @@ const Expenses = () => {
   const [editOpen, setEditOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [selectedExpense, setSelectedExpense] = useState(null);
+  const [error, setError] = useState(null);
+  const [propertyFilter, setPropertyFilter] = useState('all');
+  const [categoryFilter, setCategoryFilter] = useState('all');
+  const [searchTerm, setSearchTerm] = useState('');
   const [newExpense, setNewExpense] = useState({
     amount: '',
     date: '',
@@ -55,24 +74,22 @@ const Expenses = () => {
 
   const fetchExpenses = async () => {
     try {
-      const response = await fetch('http://localhost:3005/api/expenses');
+      const response = await fetch(`${config.apiUrl}/api/expenses`);
       if (!response.ok) {
         const errorData = await response.json();
-        console.error('Error fetching expenses:', errorData);
-        setExpenses([]); // Set empty array on error
-        return;
+        throw new Error(errorData.error || 'Failed to fetch expenses');
       }
       const data = await response.json();
-      setExpenses(Array.isArray(data) ? data : []);
+      setExpenses(data);
     } catch (error) {
       console.error('Error fetching expenses:', error);
-      setExpenses([]); // Set empty array on error
+      setError(error.message);
     }
   };
 
   const fetchProperties = async () => {
     try {
-      const response = await fetch('http://localhost:3005/api/properties');
+      const response = await fetch(`${config.apiUrl}/api/properties`);
       const data = await response.json();
       setProperties(data);
     } catch (error) {
@@ -126,6 +143,68 @@ const Expenses = () => {
     setSelectedExpense(null);
   };
 
+  const handlePropertyFilterChange = (event) => {
+    setPropertyFilter(event.target.value);
+  };
+
+  const handleCategoryFilterChange = (event) => {
+    setCategoryFilter(event.target.value);
+  };
+
+  const handleSearchChange = (event) => {
+    setSearchTerm(event.target.value);
+  };
+
+  const getFilteredExpenses = () => {
+    let filtered = [...expenses];
+
+    // Filter by property
+    if (propertyFilter !== 'all') {
+      filtered = filtered.filter(expense => expense.propertyId === propertyFilter);
+    }
+
+    // Filter by category
+    if (categoryFilter !== 'all') {
+      filtered = filtered.filter(expense => expense.category === categoryFilter);
+    }
+
+    // Filter by search term (description)
+    if (searchTerm.trim() !== '') {
+      filtered = filtered.filter(expense => 
+        expense.description?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        expense.category.toLowerCase().includes(searchTerm.toLowerCase())
+      );
+    }
+
+    // Sort by date (most recent first)
+    return filtered.sort((a, b) => new Date(b.date) - new Date(a.date));
+  };
+
+  const getExpenseStatistics = () => {
+    const filteredExpenses = getFilteredExpenses();
+    const totalAmount = filteredExpenses.reduce((sum, expense) => sum + parseFloat(expense.amount), 0);
+    
+    // Category breakdown
+    const categoryBreakdown = {};
+    filteredExpenses.forEach(expense => {
+      categoryBreakdown[expense.category] = (categoryBreakdown[expense.category] || 0) + parseFloat(expense.amount);
+    });
+
+    // Property breakdown
+    const propertyBreakdown = {};
+    filteredExpenses.forEach(expense => {
+      const propertyName = properties.find(p => p.id === expense.propertyId)?.name || 'Unknown';
+      propertyBreakdown[propertyName] = (propertyBreakdown[propertyName] || 0) + parseFloat(expense.amount);
+    });
+
+    return {
+      totalAmount,
+      totalCount: filteredExpenses.length,
+      categoryBreakdown,
+      propertyBreakdown
+    };
+  };
+
   const handleChange = (e) => {
     setNewExpense({
       ...newExpense,
@@ -135,9 +214,10 @@ const Expenses = () => {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    setError(null);
     try {
       console.log('Submitting expense:', newExpense);
-      const response = await fetch('http://localhost:3005/api/expenses', {
+      const response = await fetch(`${config.apiUrl}/api/expenses`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -145,68 +225,63 @@ const Expenses = () => {
         body: JSON.stringify(newExpense),
       });
       
-      if (!response.ok) {
-        const errorData = await response.json();
-        console.error('Server error:', errorData);
-        alert(errorData.error || 'Failed to create expense');
-        return;
-      }
-      
       const data = await response.json();
-      console.log('Expense created:', data);
+      
+      if (!response.ok) {
+        throw new Error(data.error || 'Failed to create expense');
+      }
+
       fetchExpenses();
       handleClose();
     } catch (error) {
       console.error('Error creating expense:', error);
-      alert('Failed to create expense. Please try again.');
+      setError(error.message);
     }
   };
 
   const handleEdit = async (e) => {
     e.preventDefault();
+    setError(null);
     try {
-      const response = await fetch(`http://localhost:3005/api/expenses/${selectedExpense.id}`, {
+      const response = await fetch(`${config.apiUrl}/api/expenses/${selectedExpense.id}`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify(newExpense),
       });
-
+      
+      const data = await response.json();
+      
       if (!response.ok) {
-        const errorData = await response.json();
-        console.error('Server error:', errorData);
-        alert(errorData.error || 'Failed to update expense');
-        return;
+        throw new Error(data.error || 'Failed to update expense');
       }
 
-      await response.json();
       fetchExpenses();
       handleEditClose();
     } catch (error) {
       console.error('Error updating expense:', error);
-      alert('Failed to update expense. Please try again.');
+      setError(error.message);
     }
   };
 
   const handleDelete = async () => {
+    setError(null);
     try {
-      const response = await fetch(`http://localhost:3005/api/expenses/${selectedExpense.id}`, {
+      const response = await fetch(`${config.apiUrl}/api/expenses/${selectedExpense.id}`, {
         method: 'DELETE',
       });
-
+      
       if (!response.ok) {
-        const errorData = await response.json();
-        console.error('Server error:', errorData);
-        alert(errorData.error || 'Failed to delete expense');
-        return;
+        const data = await response.json();
+        throw new Error(data.error || 'Failed to delete expense');
       }
 
       fetchExpenses();
       handleDeleteClose();
     } catch (error) {
       console.error('Error deleting expense:', error);
-      alert('Failed to delete expense. Please try again.');
+      setError(error.message);
     }
   };
 
@@ -222,6 +297,162 @@ const Expenses = () => {
           </Button>
         </Box>
 
+        {error && (
+          <Alert severity="error" sx={{ mb: 2 }}>
+            {error}
+          </Alert>
+        )}
+
+        {/* Statistics Cards */}
+        {(() => {
+          const stats = getExpenseStatistics();
+          return (
+            <Grid container spacing={3} sx={{ mb: 3 }}>
+              <Grid item xs={12} sm={6} md={3}>
+                <Card>
+                  <CardContent>
+                    <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                      <TrendingUpIcon color="primary" sx={{ mr: 1 }} />
+                      <Typography variant="h6" component="div">
+                        Total Expenses
+                      </Typography>
+                    </Box>
+                    <Typography variant="h4" color="primary">
+                      ${stats.totalAmount.toFixed(2)}
+                    </Typography>
+                    <Typography variant="body2" color="text.secondary">
+                      {stats.totalCount} expenses
+                    </Typography>
+                  </CardContent>
+                </Card>
+              </Grid>
+              <Grid item xs={12} sm={6} md={3}>
+                <Card>
+                  <CardContent>
+                    <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                      <CategoryIcon color="secondary" sx={{ mr: 1 }} />
+                      <Typography variant="h6" component="div">
+                        Categories
+                      </Typography>
+                    </Box>
+                    <Typography variant="h4" color="secondary">
+                      {Object.keys(stats.categoryBreakdown).length}
+                    </Typography>
+                    <Typography variant="body2" color="text.secondary">
+                      Active categories
+                    </Typography>
+                  </CardContent>
+                </Card>
+              </Grid>
+              <Grid item xs={12} sm={6} md={3}>
+                <Card>
+                  <CardContent>
+                    <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                      <HomeIcon color="success" sx={{ mr: 1 }} />
+                      <Typography variant="h6" component="div">
+                        Properties
+                      </Typography>
+                    </Box>
+                    <Typography variant="h4" color="success">
+                      {Object.keys(stats.propertyBreakdown).length}
+                    </Typography>
+                    <Typography variant="body2" color="text.secondary">
+                      With expenses
+                    </Typography>
+                  </CardContent>
+                </Card>
+              </Grid>
+              <Grid item xs={12} sm={6} md={3}>
+                <Card>
+                  <CardContent>
+                    <Typography variant="h6" component="div">
+                      Top Category
+                    </Typography>
+                    {(() => {
+                      const topCategory = Object.entries(stats.categoryBreakdown)
+                        .sort(([,a], [,b]) => b - a)[0];
+                      return topCategory ? (
+                        <>
+                          <Typography variant="h4" color="info">
+                            {topCategory[0]}
+                          </Typography>
+                          <Typography variant="body2" color="text.secondary">
+                            ${topCategory[1].toFixed(2)}
+                          </Typography>
+                        </>
+                      ) : (
+                        <Typography variant="body2" color="text.secondary">
+                          No expenses
+                        </Typography>
+                      );
+                    })()}
+                  </CardContent>
+                </Card>
+              </Grid>
+            </Grid>
+          );
+        })()}
+
+        {/* Filters */}
+        <Box sx={{ mb: 3, p: 2, bgcolor: 'background.paper', borderRadius: 1, border: 1, borderColor: 'divider' }}>
+          <Stack direction="row" spacing={2} alignItems="center" sx={{ mb: 2 }}>
+            <FilterListIcon color="action" />
+            <Typography variant="h6">Filters</Typography>
+          </Stack>
+          <Grid container spacing={2} alignItems="center">
+            <Grid item xs={12} sm={6} md={3}>
+              <FormControl fullWidth>
+                <InputLabel>Property</InputLabel>
+                <Select
+                  value={propertyFilter}
+                  label="Property"
+                  onChange={handlePropertyFilterChange}
+                >
+                  <MenuItem value="all">All Properties</MenuItem>
+                  {properties.map((property) => (
+                    <MenuItem key={property.id} value={property.id}>
+                      {property.name}
+                    </MenuItem>
+                  ))}
+                </Select>
+              </FormControl>
+            </Grid>
+            <Grid item xs={12} sm={6} md={3}>
+              <FormControl fullWidth>
+                <InputLabel>Category</InputLabel>
+                <Select
+                  value={categoryFilter}
+                  label="Category"
+                  onChange={handleCategoryFilterChange}
+                >
+                  <MenuItem value="all">All Categories</MenuItem>
+                  {EXPENSE_CATEGORIES.map((category) => (
+                    <MenuItem key={category} value={category}>
+                      {category}
+                    </MenuItem>
+                  ))}
+                </Select>
+              </FormControl>
+            </Grid>
+            <Grid item xs={12} sm={6} md={3}>
+              <TextField
+                fullWidth
+                label="Search Description"
+                value={searchTerm}
+                onChange={handleSearchChange}
+                InputProps={{
+                  startAdornment: <SearchIcon sx={{ mr: 1, color: 'text.secondary' }} />,
+                }}
+              />
+            </Grid>
+            <Grid item xs={12} sm={6} md={3}>
+              <Typography variant="body2" color="text.secondary">
+                Showing {getFilteredExpenses().length} of {expenses.length} expenses
+              </Typography>
+            </Grid>
+          </Grid>
+        </Box>
+
         <TableContainer component={Paper}>
           <Table>
             <TableHead>
@@ -235,32 +466,37 @@ const Expenses = () => {
               </TableRow>
             </TableHead>
             <TableBody>
-              {[...expenses]
-                .sort((a, b) => new Date(b.date) - new Date(a.date))
-                .map((expense) => (
-                  <TableRow key={expense.id}>
-                    <TableCell>
-                      {new Date(expense.date).toLocaleDateString('en-US', {
-                        timeZone: 'UTC',
-                        year: 'numeric',
-                        month: 'long',
-                        day: 'numeric'
-                      })}
-                    </TableCell>
-                    <TableCell>{properties.find(p => p.id === expense.propertyId)?.name || 'Unknown'}</TableCell>
-                    <TableCell>{expense.category}</TableCell>
-                    <TableCell align="right">${expense.amount}</TableCell>
-                    <TableCell>{expense.description}</TableCell>
-                    <TableCell align="center">
-                      <IconButton size="small" onClick={() => handleEditOpen(expense)}>
-                        <EditIcon />
-                      </IconButton>
-                      <IconButton size="small" color="error" onClick={() => handleDeleteOpen(expense)}>
-                        <DeleteIcon />
-                      </IconButton>
-                    </TableCell>
-                  </TableRow>
-                ))}
+              {getFilteredExpenses().map((expense) => (
+                <TableRow key={expense.id}>
+                  <TableCell>
+                    {new Date(expense.date).toLocaleDateString('en-US', {
+                      timeZone: 'UTC',
+                      year: 'numeric',
+                      month: 'long',
+                      day: 'numeric'
+                    })}
+                  </TableCell>
+                  <TableCell>{properties.find(p => p.id === expense.propertyId)?.name || 'Unknown Property'}</TableCell>
+                  <TableCell>
+                    <Chip
+                      label={expense.category}
+                      size="small"
+                      color="primary"
+                      variant="outlined"
+                    />
+                  </TableCell>
+                  <TableCell align="right">${expense.amount}</TableCell>
+                  <TableCell>{expense.description}</TableCell>
+                  <TableCell align="center">
+                    <IconButton size="small" onClick={() => handleEditOpen(expense)}>
+                      <EditIcon />
+                    </IconButton>
+                    <IconButton size="small" color="error" onClick={() => handleDeleteOpen(expense)}>
+                      <DeleteIcon />
+                    </IconButton>
+                  </TableCell>
+                </TableRow>
+              ))}
             </TableBody>
           </Table>
         </TableContainer>
@@ -317,6 +553,7 @@ const Expenses = () => {
                 margin="normal"
                 multiline
                 rows={3}
+                required
               />
               <TextField
                 fullWidth
@@ -396,6 +633,7 @@ const Expenses = () => {
                 margin="normal"
                 multiline
                 rows={3}
+                required
               />
               <TextField
                 fullWidth
