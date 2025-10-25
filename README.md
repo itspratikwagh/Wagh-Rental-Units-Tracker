@@ -14,13 +14,14 @@ A full-stack application for managing rental properties, tenants, payments, and 
 
 - Frontend: React with Vite
 - Backend: Node.js with Express
-- Database: PostgreSQL with Prisma ORM
+- Database: PostgreSQL with Prisma ORM (deployed on Railway)
 - UI Framework: Material-UI
+- Cloud Database: Railway PostgreSQL
 
 ## Prerequisites
 
 - Node.js (v14 or higher)
-- PostgreSQL
+- PostgreSQL (local development) or Railway account (cloud deployment)
 - npm or yarn
 
 ## Setup Instructions
@@ -71,6 +72,24 @@ npm run dev
 The application will be available at:
 - Frontend: http://localhost:5173
 - Backend API: http://localhost:3005
+
+## Cloud Deployment (Railway)
+
+The application is currently deployed with a Railway PostgreSQL database containing:
+- **Properties**: 2
+- **Tenants**: 17
+- **Payments**: 107
+- **Expenses**: 167
+- **Total Records**: 293
+
+### Railway Database Connection
+- **Database URL**: `postgresql://postgres:gMnzgDsdPHZJjOrkEpONeIIwAvCiKkOT@crossover.proxy.rlwy.net:59900/railway`
+- **Status**: ✅ Active and fully populated with production data
+
+### Database Backups
+- All database backups are stored in the `database-backups/` directory
+- Latest Railway backup: `database-backups/latest-railway-backup.json`
+- Backup files include complete JSON exports of all tables
 
 ## Contributing
 

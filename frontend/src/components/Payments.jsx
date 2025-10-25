@@ -23,11 +23,20 @@ import {
   Select,
   Grid,
   Chip,
+  Menu,
+  ToggleButtonGroup,
+  ToggleButton,
 } from '@mui/material';
 import EditIcon from '@mui/icons-material/Edit';
 import DeleteIcon from '@mui/icons-material/Delete';
 import SearchIcon from '@mui/icons-material/Search';
+import DownloadIcon from '@mui/icons-material/Download';
+import WarningIcon from '@mui/icons-material/Warning';
+import CheckCircleIcon from '@mui/icons-material/CheckCircle';
+import PendingIcon from '@mui/icons-material/Pending';
 import config from '../config';
+import jsPDF from 'jspdf';
+import 'jspdf-autotable';
 
 const Payments = () => {
   const [payments, setPayments] = useState([]);
@@ -42,12 +51,17 @@ const Payments = () => {
     amount: '',
     date: '',
     notes: '',
+    status: 'completed',
   });
   const [error, setError] = useState(null);
   const [selectedProperty, setSelectedProperty] = useState('all');
   const [searchTerm, setSearchTerm] = useState('');
   const [showMissingPayments, setShowMissingPayments] = useState(false);
   const [selectedMonth, setSelectedMonth] = useState('');
+  const [dateRange, setDateRange] = useState('all');
+  const [customStartDate, setCustomStartDate] = useState('');
+  const [customEndDate, setCustomEndDate] = useState('');
+  const [exportMenuAnchor, setExportMenuAnchor] = useState(null);
 
   useEffect(() => {
     fetchPayments();
@@ -114,6 +128,7 @@ const Payments = () => {
       amount: '',
       date: '',
       notes: '',
+      status: 'completed',
     });
     setError(null);
   };
@@ -125,6 +140,7 @@ const Payments = () => {
       amount: payment.amount,
       date: new Date(payment.date).toISOString().split('T')[0],
       notes: payment.notes || '',
+      status: payment.status || 'completed',
     });
     setEditOpen(true);
   };
@@ -137,6 +153,7 @@ const Payments = () => {
       amount: '',
       date: '',
       notes: '',
+      status: 'completed',
     });
     setError(null);
   };
@@ -177,8 +194,143 @@ const Payments = () => {
     setSelectedMonth(event.target.value);
   };
 
+  // Helper function to calculate days overdue
+  const calculateDaysOverdue = (paymentDate) => {
+    const dueDate = new Date(paymentDate);
+    dueDate.setDate(1); // Due on 1st of month
+    const gracePeriodEnd = new Date(dueDate);
+    gracePeriodEnd.setDate(gracePeriodEnd.getDate() + 3); // 3 days grace period
+    
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    
+    if (today > gracePeriodEnd) {
+      const diffTime = Math.abs(today - gracePeriodEnd);
+      const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+      return diffDays;
+    }
+    return 0;
+  };
+
+  // Helper function to get actual payment status (with late detection)
+  const getPaymentStatus = (payment) => {
+    if (payment.status === 'completed' || payment.status === 'partial') {
+      return payment.status;
+    }
+    
+    // Check if pending payment is now late
+    const daysOverdue = calculateDaysOverdue(payment.date);
+    if (daysOverdue > 0 && payment.status === 'pending') {
+      return 'late';
+    }
+    
+    return payment.status;
+  };
+
+  // Get date range based on selection
+  const getDateRangeValues = () => {
+    const now = new Date();
+    now.setHours(23, 59, 59, 999);
+    
+    switch (dateRange) {
+      case 'thisWeek': {
+        const startOfWeek = new Date(now);
+        startOfWeek.setDate(now.getDate() - now.getDay());
+        startOfWeek.setHours(0, 0, 0, 0);
+        return { start: startOfWeek, end: now };
+      }
+      case 'thisMonth': {
+        const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+        return { start: startOfMonth, end: now };
+      }
+      case 'last3Months': {
+        const threeMonthsAgo = new Date(now);
+        threeMonthsAgo.setMonth(now.getMonth() - 3);
+        threeMonthsAgo.setHours(0, 0, 0, 0);
+        return { start: threeMonthsAgo, end: now };
+      }
+      case 'thisYear': {
+        const startOfYear = new Date(now.getFullYear(), 0, 1);
+        return { start: startOfYear, end: now };
+      }
+      case 'custom': {
+        if (customStartDate && customEndDate) {
+          return {
+            start: new Date(customStartDate),
+            end: new Date(customEndDate + 'T23:59:59')
+          };
+        }
+        return null;
+      }
+      default:
+        return null;
+    }
+  };
+
+  // Calculate summary statistics
+  const calculateSummaryStats = () => {
+    const now = new Date();
+    const currentMonth = now.getMonth();
+    const currentYear = now.getFullYear();
+    
+    // Filter payments by current month
+    const thisMonthPayments = payments.filter(payment => {
+      const paymentDate = new Date(payment.date);
+      return paymentDate.getMonth() === currentMonth && 
+             paymentDate.getFullYear() === currentYear &&
+             (payment.status === 'completed' || payment.status === 'partial');
+    });
+    
+    // Filter payments by current year
+    const thisYearPayments = payments.filter(payment => {
+      const paymentDate = new Date(payment.date);
+      return paymentDate.getFullYear() === currentYear &&
+             (payment.status === 'completed' || payment.status === 'partial');
+    });
+    
+    // Calculate totals
+    const totalThisMonth = thisMonthPayments.reduce((sum, p) => sum + p.amount, 0);
+    const totalThisYear = thisYearPayments.reduce((sum, p) => sum + p.amount, 0);
+    
+    // Calculate expected for this month (active tenants only)
+    const activeTenants = tenants.filter(t => !t.isArchived);
+    const expectedThisMonth = activeTenants.reduce((sum, t) => sum + t.rentAmount, 0);
+    
+    // Calculate collection rate
+    const collectionRate = expectedThisMonth > 0 
+      ? (totalThisMonth / expectedThisMonth) * 100 
+      : 0;
+    
+    // Count late and pending payments
+    const latePayments = payments.filter(p => getPaymentStatus(p) === 'late');
+    const pendingPayments = payments.filter(p => p.status === 'pending' && getPaymentStatus(p) === 'pending');
+    
+    const totalLateAmount = latePayments.reduce((sum, p) => sum + p.amount, 0);
+    const totalPendingAmount = pendingPayments.reduce((sum, p) => sum + p.amount, 0);
+    
+    return {
+      totalThisMonth,
+      totalThisYear,
+      expectedThisMonth,
+      collectionRate,
+      lateCount: latePayments.length,
+      lateAmount: totalLateAmount,
+      pendingCount: pendingPayments.length,
+      pendingAmount: totalPendingAmount,
+    };
+  };
+
   const getFilteredPayments = () => {
     let filtered = [...payments];
+
+    // Filter by date range
+    const dateRangeValues = getDateRangeValues();
+    if (dateRangeValues) {
+      filtered = filtered.filter(payment => {
+        const paymentDate = new Date(payment.date);
+        return paymentDate >= dateRangeValues.start && paymentDate <= dateRangeValues.end;
+      });
+    }
 
     // Filter by property
     if (selectedProperty !== 'all') {
@@ -244,6 +396,129 @@ const Payments = () => {
 
   const missingTenantsCount = getPaymentsWithMissingTenants().length;
   const archivedTenantsCount = getPaymentsFromArchivedTenants().length;
+
+  // Export to CSV
+  const exportToCSV = () => {
+    const filtered = getFilteredPayments();
+    const stats = calculateSummaryStats();
+    
+    let csvContent = "Wagh Rental Properties - Payment Report\n";
+    csvContent += `Generated: ${new Date().toLocaleDateString()}\n\n`;
+    csvContent += "Summary Statistics\n";
+    csvContent += `Total This Month,$${stats.totalThisMonth.toFixed(2)}\n`;
+    csvContent += `Total This Year,$${stats.totalThisYear.toFixed(2)}\n`;
+    csvContent += `Expected This Month,$${stats.expectedThisMonth.toFixed(2)}\n`;
+    csvContent += `Collection Rate,${stats.collectionRate.toFixed(1)}%\n`;
+    csvContent += `Late Payments,${stats.lateCount} ($${stats.lateAmount.toFixed(2)})\n`;
+    csvContent += `Pending Payments,${stats.pendingCount} ($${stats.pendingAmount.toFixed(2)})\n\n`;
+    
+    csvContent += "Date,Tenant,Property,Amount,Status,Days Overdue,Notes\n";
+    
+    filtered.forEach(payment => {
+      const tenant = tenants.find(t => t.id === payment.tenantId);
+      const property = properties.find(p => p.id === tenant?.propertyId);
+      const status = getPaymentStatus(payment);
+      const daysOverdue = status === 'late' ? calculateDaysOverdue(payment.date) : 0;
+      
+      const row = [
+        new Date(payment.date).toLocaleDateString('en-US', { timeZone: 'UTC' }),
+        tenant?.name || 'Unknown',
+        property?.name || 'Unknown',
+        `$${payment.amount}`,
+        status.toUpperCase(),
+        daysOverdue > 0 ? daysOverdue : '',
+        `"${(payment.notes || '').replace(/"/g, '""')}"`
+      ].join(',');
+      
+      csvContent += row + '\n';
+    });
+    
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    const url = URL.createObjectURL(blob);
+    link.setAttribute('href', url);
+    link.setAttribute('download', `payments_export_${new Date().toISOString().split('T')[0]}.csv`);
+    link.style.visibility = 'hidden';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    setExportMenuAnchor(null);
+  };
+
+  // Export to PDF
+  const exportToPDF = () => {
+    const filtered = getFilteredPayments();
+    const stats = calculateSummaryStats();
+    
+    const doc = new jsPDF();
+    
+    // Header
+    doc.setFontSize(18);
+    doc.text('Wagh Rental Properties', 14, 20);
+    doc.setFontSize(14);
+    doc.text('Payment Report', 14, 28);
+    doc.setFontSize(10);
+    doc.text(`Generated: ${new Date().toLocaleDateString()}`, 14, 35);
+    
+    // Summary Statistics
+    doc.setFontSize(12);
+    doc.text('Summary Statistics', 14, 45);
+    doc.setFontSize(10);
+    
+    const summaryData = [
+      ['Total This Month', `$${stats.totalThisMonth.toFixed(2)}`],
+      ['Total This Year', `$${stats.totalThisYear.toFixed(2)}`],
+      ['Expected This Month', `$${stats.expectedThisMonth.toFixed(2)}`],
+      ['Collection Rate', `${stats.collectionRate.toFixed(1)}%`],
+      ['Late Payments', `${stats.lateCount} ($${stats.lateAmount.toFixed(2)})`],
+      ['Pending Payments', `${stats.pendingCount} ($${stats.pendingAmount.toFixed(2)})`],
+    ];
+    
+    doc.autoTable({
+      startY: 50,
+      head: [],
+      body: summaryData,
+      theme: 'plain',
+      styles: { fontSize: 10 },
+      columnStyles: {
+        0: { fontStyle: 'bold', cellWidth: 60 },
+        1: { cellWidth: 50 }
+      }
+    });
+    
+    // Payment Details Table
+    const tableData = filtered.map(payment => {
+      const tenant = tenants.find(t => t.id === payment.tenantId);
+      const property = properties.find(p => p.id === tenant?.propertyId);
+      const status = getPaymentStatus(payment);
+      const daysOverdue = status === 'late' ? calculateDaysOverdue(payment.date) : 0;
+      
+      return [
+        new Date(payment.date).toLocaleDateString('en-US', { timeZone: 'UTC', month: 'short', day: 'numeric', year: 'numeric' }),
+        tenant?.name || 'Unknown',
+        property?.name || 'Unknown',
+        `$${payment.amount}`,
+        status.toUpperCase(),
+        daysOverdue > 0 ? `${daysOverdue}d` : '',
+      ];
+    });
+    
+    doc.autoTable({
+      startY: doc.lastAutoTable.finalY + 10,
+      head: [['Date', 'Tenant', 'Property', 'Amount', 'Status', 'Overdue']],
+      body: tableData,
+      theme: 'striped',
+      styles: { fontSize: 9 },
+      headStyles: { fillColor: [66, 139, 202] },
+      columnStyles: {
+        3: { halign: 'right' },
+        5: { halign: 'center' }
+      }
+    });
+    
+    doc.save(`payments_report_${new Date().toISOString().split('T')[0]}.pdf`);
+    setExportMenuAnchor(null);
+  };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -326,6 +601,8 @@ const Payments = () => {
     }
   };
 
+  const stats = calculateSummaryStats();
+  
   return (
     <Container maxWidth="lg">
       <Box sx={{ my: 4 }}>
@@ -333,9 +610,26 @@ const Payments = () => {
           <Typography variant="h4" component="h1">
             Payments
           </Typography>
-          <Button variant="contained" color="primary" onClick={handleOpen}>
-            Add Payment
-          </Button>
+          <Box sx={{ display: 'flex', gap: 2 }}>
+            <Button
+              variant="outlined"
+              startIcon={<DownloadIcon />}
+              onClick={(e) => setExportMenuAnchor(e.currentTarget)}
+            >
+              Export
+            </Button>
+            <Menu
+              anchorEl={exportMenuAnchor}
+              open={Boolean(exportMenuAnchor)}
+              onClose={() => setExportMenuAnchor(null)}
+            >
+              <MenuItem onClick={exportToCSV}>Export to CSV</MenuItem>
+              <MenuItem onClick={exportToPDF}>Export to PDF</MenuItem>
+            </Menu>
+            <Button variant="contained" color="primary" onClick={handleOpen}>
+              Add Payment
+            </Button>
+          </Box>
         </Box>
 
         {error && (
@@ -344,9 +638,131 @@ const Payments = () => {
           </Typography>
         )}
 
+        {/* Summary Cards */}
+        <Grid container spacing={3} sx={{ mb: 4 }}>
+          <Grid item xs={12} md={4}>
+            <Paper sx={{ p: 2, display: 'flex', flexDirection: 'column', height: 120 }}>
+              <Typography component="h2" variant="h6" color="primary" gutterBottom>
+                Total This Month
+              </Typography>
+              <Typography component="p" variant="h4" color="success.main">
+                ${stats.totalThisMonth.toFixed(2)}
+              </Typography>
+            </Paper>
+          </Grid>
+          <Grid item xs={12} md={4}>
+            <Paper sx={{ p: 2, display: 'flex', flexDirection: 'column', height: 120 }}>
+              <Typography component="h2" variant="h6" color="primary" gutterBottom>
+                Total This Year
+              </Typography>
+              <Typography component="p" variant="h4">
+                ${stats.totalThisYear.toFixed(2)}
+              </Typography>
+            </Paper>
+          </Grid>
+          <Grid item xs={12} md={4}>
+            <Paper sx={{ p: 2, display: 'flex', flexDirection: 'column', height: 120 }}>
+              <Typography component="h2" variant="h6" color="primary" gutterBottom>
+                Expected This Month
+              </Typography>
+              <Typography component="p" variant="h4">
+                ${stats.expectedThisMonth.toFixed(2)}
+              </Typography>
+            </Paper>
+          </Grid>
+          <Grid item xs={12} md={4}>
+            <Paper sx={{ p: 2, display: 'flex', flexDirection: 'column', height: 120 }}>
+              <Typography component="h2" variant="h6" color="primary" gutterBottom>
+                Collection Rate
+              </Typography>
+              <Typography 
+                component="p" 
+                variant="h4" 
+                color={stats.collectionRate >= 90 ? 'success.main' : stats.collectionRate >= 70 ? 'warning.main' : 'error'}
+              >
+                {stats.collectionRate.toFixed(1)}%
+              </Typography>
+            </Paper>
+          </Grid>
+          <Grid item xs={12} md={4}>
+            <Paper sx={{ p: 2, display: 'flex', flexDirection: 'column', height: 120 }}>
+              <Typography component="h2" variant="h6" color="error" gutterBottom>
+                Late Payments
+              </Typography>
+              <Typography component="p" variant="h4" color="error">
+                {stats.lateCount}
+              </Typography>
+              <Typography component="p" variant="body2" color="text.secondary">
+                ${stats.lateAmount.toFixed(2)} overdue
+              </Typography>
+            </Paper>
+          </Grid>
+          <Grid item xs={12} md={4}>
+            <Paper sx={{ p: 2, display: 'flex', flexDirection: 'column', height: 120 }}>
+              <Typography component="h2" variant="h6" color="warning.main" gutterBottom>
+                Pending Payments
+              </Typography>
+              <Typography component="p" variant="h4" color="warning.main">
+                {stats.pendingCount}
+              </Typography>
+              <Typography component="p" variant="body2" color="text.secondary">
+                ${stats.pendingAmount.toFixed(2)} pending
+              </Typography>
+            </Paper>
+          </Grid>
+        </Grid>
+
         {/* Filters */}
         <Paper sx={{ p: 2, mb: 2 }}>
           <Grid container spacing={2} alignItems="center">
+            {/* Date Range Filter */}
+            <Grid item xs={12}>
+              <Typography variant="subtitle2" gutterBottom>
+                Date Range Filter
+              </Typography>
+              <ToggleButtonGroup
+                value={dateRange}
+                exclusive
+                onChange={(e, newValue) => newValue && setDateRange(newValue)}
+                size="small"
+                sx={{ flexWrap: 'wrap' }}
+              >
+                <ToggleButton value="all">All Time</ToggleButton>
+                <ToggleButton value="thisWeek">This Week</ToggleButton>
+                <ToggleButton value="thisMonth">This Month</ToggleButton>
+                <ToggleButton value="last3Months">Last 3 Months</ToggleButton>
+                <ToggleButton value="thisYear">This Year</ToggleButton>
+                <ToggleButton value="custom">Custom Range</ToggleButton>
+              </ToggleButtonGroup>
+            </Grid>
+            
+            {dateRange === 'custom' && (
+              <>
+                <Grid item xs={12} md={6}>
+                  <TextField
+                    fullWidth
+                    label="Start Date"
+                    type="date"
+                    value={customStartDate}
+                    onChange={(e) => setCustomStartDate(e.target.value)}
+                    InputLabelProps={{ shrink: true }}
+                    size="small"
+                  />
+                </Grid>
+                <Grid item xs={12} md={6}>
+                  <TextField
+                    fullWidth
+                    label="End Date"
+                    type="date"
+                    value={customEndDate}
+                    onChange={(e) => setCustomEndDate(e.target.value)}
+                    InputLabelProps={{ shrink: true }}
+                    size="small"
+                  />
+                </Grid>
+              </>
+            )}
+            
             <Grid item xs={12} md={3}>
               <FormControl fullWidth>
                 <InputLabel id="property-filter-label">Filter by Property</InputLabel>
@@ -445,6 +861,7 @@ const Payments = () => {
                     <TableCell>Tenant</TableCell>
                     <TableCell>Property</TableCell>
                     <TableCell align="right">Amount</TableCell>
+                    <TableCell>Status</TableCell>
                     <TableCell>Notes</TableCell>
                     <TableCell align="center">Actions</TableCell>
                   </>
@@ -478,6 +895,7 @@ const Payments = () => {
                             amount: missingPayment.expectedAmount,
                             date: missingPayment.month + '-01',
                             notes: '',
+                            status: 'pending',
                           });
                           setOpen(true);
                         }}
@@ -491,14 +909,74 @@ const Payments = () => {
                 getFilteredPayments().map((payment) => {
                   const tenant = tenants.find(t => t.id === payment.tenantId);
                   const property = properties.find(p => p.id === tenant?.propertyId);
+                  const actualStatus = getPaymentStatus(payment);
+                  const daysOverdue = actualStatus === 'late' ? calculateDaysOverdue(payment.date) : 0;
                   
                   // Debug logging for missing tenants
                   if (!tenant) {
                     console.warn(`Payment ${payment.id} references non-existent tenant ${payment.tenantId}`);
                   }
+
+                  // Determine row background color based on status
+                  const getRowStyle = () => {
+                    if (actualStatus === 'late') {
+                      return { backgroundColor: '#ffebee' }; // Light red
+                    } else if (actualStatus === 'pending') {
+                      return { backgroundColor: '#fff9c4' }; // Light yellow
+                    }
+                    return {};
+                  };
+
+                  // Get status chip
+                  const renderStatusChip = () => {
+                    switch (actualStatus) {
+                      case 'completed':
+                        return (
+                          <Chip
+                            icon={<CheckCircleIcon />}
+                            label="Completed"
+                            color="success"
+                            size="small"
+                          />
+                        );
+                      case 'pending':
+                        return (
+                          <Chip
+                            icon={<PendingIcon />}
+                            label="Pending"
+                            color="warning"
+                            size="small"
+                          />
+                        );
+                      case 'late':
+                        return (
+                          <Chip
+                            icon={<WarningIcon />}
+                            label={`Late (${daysOverdue}d)`}
+                            color="error"
+                            size="small"
+                          />
+                        );
+                      case 'partial':
+                        return (
+                          <Chip
+                            label="Partial"
+                            color="info"
+                            size="small"
+                          />
+                        );
+                      default:
+                        return (
+                          <Chip
+                            label={actualStatus}
+                            size="small"
+                          />
+                        );
+                    }
+                  };
                   
                   return (
-                    <TableRow key={payment.id}>
+                    <TableRow key={payment.id} sx={getRowStyle()}>
                       <TableCell>
                         {new Date(payment.date).toLocaleDateString('en-US', {
                           timeZone: 'UTC',
@@ -520,6 +998,7 @@ const Payments = () => {
                       </TableCell>
                       <TableCell>{property?.name || 'Unknown Property'}</TableCell>
                       <TableCell align="right">${payment.amount}</TableCell>
+                      <TableCell>{renderStatusChip()}</TableCell>
                       <TableCell>{payment.notes}</TableCell>
                       <TableCell align="center">
                         <IconButton size="small" onClick={() => handleEditOpen(payment)}>
@@ -581,6 +1060,21 @@ const Payments = () => {
                   shrink: true,
                 }}
               />
+              <TextField
+                fullWidth
+                select
+                label="Status"
+                name="status"
+                value={newPayment.status}
+                onChange={handleChange}
+                margin="normal"
+                required
+              >
+                <MenuItem value="completed">Completed</MenuItem>
+                <MenuItem value="pending">Pending</MenuItem>
+                <MenuItem value="late">Late</MenuItem>
+                <MenuItem value="partial">Partial</MenuItem>
+              </TextField>
               <TextField
                 fullWidth
                 label="Notes"
@@ -645,6 +1139,21 @@ const Payments = () => {
                   shrink: true,
                 }}
               />
+              <TextField
+                fullWidth
+                select
+                label="Status"
+                name="status"
+                value={newPayment.status}
+                onChange={handleChange}
+                margin="normal"
+                required
+              >
+                <MenuItem value="completed">Completed</MenuItem>
+                <MenuItem value="pending">Pending</MenuItem>
+                <MenuItem value="late">Late</MenuItem>
+                <MenuItem value="partial">Partial</MenuItem>
+              </TextField>
               <TextField
                 fullWidth
                 label="Notes"

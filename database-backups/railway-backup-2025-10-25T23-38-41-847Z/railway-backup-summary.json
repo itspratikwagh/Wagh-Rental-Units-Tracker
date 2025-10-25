@@ -1,0 +1,12 @@
+{
+  "timestamp": "2025-10-25T23:38:42.103Z",
+  "source": "Railway Database",
+  "counts": {
+    "properties": 2,
+    "tenants": 17,
+    "payments": 107,
+    "expenses": 167,
+    "total": 293
+  },
+  "database_url": "postgresql://postgres:gMnzgDsdPHZJjOrkEpONeIIwAvCiKkOT@crossover.proxy.rlwy.net:59900/railway"
+}

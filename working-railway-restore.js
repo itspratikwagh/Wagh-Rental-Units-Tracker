@@ -4,9 +4,9 @@ const path = require('path');
 
 const prisma = new PrismaClient();
 
-async function restoreToRailway() {
+async function workingRailwayRestore() {
   try {
-    console.log('🚀 RESTORING DATA TO RAILWAY DATABASE...');
+    console.log('🚀 WORKING RAILWAY DATA RESTORATION...');
     
     // Find the latest backup files
     const backupDir = path.join(__dirname, 'database-backups');
@@ -31,7 +31,7 @@ async function restoreToRailway() {
     
     console.log(`📊 Found ${properties.length} properties, ${tenants.length} tenants, ${payments.length} payments, ${expenses.length} expenses`);
     
-    // Clear existing data (be careful!)
+    // Clear existing data
     console.log('🗑️  Clearing existing data...');
     await prisma.payment.deleteMany();
     await prisma.expense.deleteMany();
@@ -40,76 +40,76 @@ async function restoreToRailway() {
     
     // Restore Properties
     console.log('🏠 Restoring properties...');
+    const propertyMap = new Map();
     for (const property of properties) {
-      await prisma.property.create({
+      const newProperty = await prisma.property.create({
         data: {
-          id: property.id,
           name: property.name,
           address: property.address,
           type: property.type,
-          units: property.units,
-          city: property.city || 'Unknown', // Add default city if missing
-          createdAt: new Date(property.createdAt),
-          updatedAt: new Date(property.updatedAt)
+          units: property.units
         }
       });
+      propertyMap.set(property.id, newProperty.id);
     }
     console.log(`✅ Restored ${properties.length} properties`);
     
     // Restore Tenants
     console.log('👥 Restoring tenants...');
+    const tenantMap = new Map();
     for (const tenant of tenants) {
-      await prisma.tenant.create({
-        data: {
-          id: tenant.id,
-          name: tenant.name,
-          email: tenant.email,
-          phone: tenant.phone,
-          propertyId: tenant.propertyId,
-          rentAmount: tenant.rentAmount,
-          leaseStart: new Date(tenant.leaseStart),
-          leaseEnd: tenant.leaseEnd ? new Date(tenant.leaseEnd) : null,
-          isArchived: tenant.isArchived || false,
-          createdAt: new Date(tenant.createdAt),
-          updatedAt: new Date(tenant.updatedAt)
-        }
-      });
+      const newPropertyId = propertyMap.get(tenant.propertyId);
+      if (newPropertyId) {
+        const newTenant = await prisma.tenant.create({
+          data: {
+            name: tenant.name,
+            email: tenant.email,
+            phone: tenant.phone,
+            propertyId: newPropertyId,
+            rentAmount: tenant.rentAmount,
+            leaseStart: new Date(tenant.leaseStart),
+            leaseEnd: tenant.leaseEnd ? new Date(tenant.leaseEnd) : null,
+            isArchived: tenant.isArchived || false
+          }
+        });
+        tenantMap.set(tenant.id, newTenant.id);
+      }
     }
     console.log(`✅ Restored ${tenants.length} tenants`);
     
     // Restore Payments
     console.log('💰 Restoring payments...');
     for (const payment of payments) {
-      await prisma.payment.create({
-        data: {
-          id: payment.id,
-          tenantId: payment.tenantId,
-          amount: payment.amount,
-          date: new Date(payment.date),
-          paymentMethod: payment.paymentMethod,
-          status: payment.status || 'completed',
-          notes: payment.notes,
-          createdAt: new Date(payment.createdAt),
-          updatedAt: new Date(payment.updatedAt)
-        }
-      });
+      const newTenantId = tenantMap.get(payment.tenantId);
+      if (newTenantId) {
+        await prisma.payment.create({
+          data: {
+            tenantId: newTenantId,
+            amount: payment.amount,
+            date: new Date(payment.date),
+            paymentMethod: payment.paymentMethod,
+            status: payment.status || 'completed',
+            notes: payment.notes
+          }
+        });
+      }
     }
     console.log(`✅ Restored ${payments.length} payments`);
     
     // Restore Expenses
     console.log('📊 Restoring expenses...');
     for (const expense of expenses) {
+      const newPropertyId = propertyMap.get(expense.propertyId);
+      const newTenantId = expense.tenantId ? tenantMap.get(expense.tenantId) : null;
+      
       await prisma.expense.create({
         data: {
-          id: expense.id,
           description: expense.description,
           amount: expense.amount,
           date: new Date(expense.date),
           category: expense.category,
-          propertyId: expense.propertyId,
-          tenantId: expense.tenantId,
-          createdAt: new Date(expense.createdAt),
-          updatedAt: new Date(expense.updatedAt)
+          propertyId: newPropertyId,
+          tenantId: newTenantId
         }
       });
     }
@@ -134,6 +134,7 @@ async function restoreToRailway() {
     
     console.log('\n✅ Your data is now live on Railway!');
     console.log('🌐 Check your Railway dashboard to verify the database contents.');
+    console.log('🔗 Your app can now connect to Railway database!');
     
   } catch (error) {
     console.error('❌ RESTORATION FAILED:', error);
@@ -143,9 +144,4 @@ async function restoreToRailway() {
   }
 }
 
-// Only run if this script is executed directly
-if (require.main === module) {
-  restoreToRailway();
-}
-
-module.exports = { restoreToRailway };
+workingRailwayRestore();

@@ -1,4 +1,6 @@
 import React, { useState, useEffect } from 'react';
+import jsPDF from 'jspdf';
+import 'jspdf-autotable';
 import {
   Box,
   Button,
@@ -27,6 +29,9 @@ import {
   Stack,
   Card,
   CardContent,
+  Menu,
+  ToggleButtonGroup,
+  ToggleButton,
 } from '@mui/material';
 import EditIcon from '@mui/icons-material/Edit';
 import DeleteIcon from '@mui/icons-material/Delete';
@@ -35,6 +40,9 @@ import FilterListIcon from '@mui/icons-material/FilterList';
 import TrendingUpIcon from '@mui/icons-material/TrendingUp';
 import CategoryIcon from '@mui/icons-material/Category';
 import HomeIcon from '@mui/icons-material/Home';
+import DownloadIcon from '@mui/icons-material/Download';
+import CalendarTodayIcon from '@mui/icons-material/CalendarToday';
+import DateRangeIcon from '@mui/icons-material/DateRange';
 import config from '../config';
 
 const EXPENSE_CATEGORIES = [
@@ -59,6 +67,10 @@ const Expenses = () => {
   const [propertyFilter, setPropertyFilter] = useState('all');
   const [categoryFilter, setCategoryFilter] = useState('all');
   const [searchTerm, setSearchTerm] = useState('');
+  const [dateRange, setDateRange] = useState('all');
+  const [customStartDate, setCustomStartDate] = useState('');
+  const [customEndDate, setCustomEndDate] = useState('');
+  const [exportMenuAnchor, setExportMenuAnchor] = useState(null);
   const [newExpense, setNewExpense] = useState({
     amount: '',
     date: '',
@@ -155,6 +167,44 @@ const Expenses = () => {
     setSearchTerm(event.target.value);
   };
 
+  const handleDateRangeChange = (event, newDateRange) => {
+    if (newDateRange !== null) {
+      setDateRange(newDateRange);
+    }
+  };
+
+  const getDateRangeValues = () => {
+    const now = new Date();
+    let startDate, endDate;
+
+    switch (dateRange) {
+      case 'thisMonth':
+        startDate = new Date(now.getFullYear(), now.getMonth(), 1);
+        endDate = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+        break;
+      case 'thisYear':
+        startDate = new Date(now.getFullYear(), 0, 1);
+        endDate = new Date(now.getFullYear(), 11, 31);
+        break;
+      case 'lastMonth':
+        startDate = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+        endDate = new Date(now.getFullYear(), now.getMonth(), 0);
+        break;
+      case 'lastYear':
+        startDate = new Date(now.getFullYear() - 1, 0, 1);
+        endDate = new Date(now.getFullYear() - 1, 11, 31);
+        break;
+      case 'custom':
+        startDate = customStartDate ? new Date(customStartDate) : null;
+        endDate = customEndDate ? new Date(customEndDate) : null;
+        break;
+      default:
+        return { startDate: null, endDate: null };
+    }
+
+    return { startDate, endDate };
+  };
+
   const getFilteredExpenses = () => {
     let filtered = [...expenses];
 
@@ -176,13 +226,37 @@ const Expenses = () => {
       );
     }
 
+    // Filter by date range
+    const { startDate, endDate } = getDateRangeValues();
+    if (startDate && endDate) {
+      filtered = filtered.filter(expense => {
+        const expenseDate = new Date(expense.date);
+        return expenseDate >= startDate && expenseDate <= endDate;
+      });
+    }
+
     // Sort by date (most recent first)
     return filtered.sort((a, b) => new Date(b.date) - new Date(a.date));
   };
 
   const getExpenseStatistics = () => {
     const filteredExpenses = getFilteredExpenses();
+    const allExpenses = [...expenses];
+    
+    const now = new Date();
+    const thisMonth = allExpenses.filter(expense => {
+      const expenseDate = new Date(expense.date);
+      return expenseDate.getMonth() === now.getMonth() && expenseDate.getFullYear() === now.getFullYear();
+    });
+    
+    const thisYear = allExpenses.filter(expense => {
+      const expenseDate = new Date(expense.date);
+      return expenseDate.getFullYear() === now.getFullYear();
+    });
+    
     const totalAmount = filteredExpenses.reduce((sum, expense) => sum + parseFloat(expense.amount), 0);
+    const thisMonthAmount = thisMonth.reduce((sum, expense) => sum + parseFloat(expense.amount), 0);
+    const thisYearAmount = thisYear.reduce((sum, expense) => sum + parseFloat(expense.amount), 0);
     
     // Category breakdown
     const categoryBreakdown = {};
@@ -200,9 +274,88 @@ const Expenses = () => {
     return {
       totalAmount,
       totalCount: filteredExpenses.length,
+      thisMonthAmount,
+      thisYearAmount,
+      thisMonthCount: thisMonth.length,
+      thisYearCount: thisYear.length,
       categoryBreakdown,
       propertyBreakdown
     };
+  };
+
+  const exportToCSV = () => {
+    const filteredExpenses = getFilteredExpenses();
+    const stats = getExpenseStatistics();
+    
+    let csvContent = "Wagh Rental Properties - Expense Report\n";
+    csvContent += `Generated on: ${new Date().toLocaleDateString()}\n`;
+    csvContent += `Total Expenses: $${stats.totalAmount.toFixed(2)} (${stats.totalCount} items)\n`;
+    csvContent += `This Month: $${stats.thisMonthAmount.toFixed(2)} (${stats.thisMonthCount} items)\n`;
+    csvContent += `This Year: $${stats.thisYearAmount.toFixed(2)} (${stats.thisYearCount} items)\n\n`;
+    
+    csvContent += "Date,Property,Category,Amount,Description\n";
+    
+    filteredExpenses.forEach(expense => {
+      const propertyName = properties.find(p => p.id === expense.propertyId)?.name || 'Unknown';
+      const date = new Date(expense.date).toLocaleDateString();
+      const description = (expense.description || '').replace(/"/g, '""'); // Escape quotes
+      csvContent += `"${date}","${propertyName}","${expense.category}","$${expense.amount}","${description}"\n`;
+    });
+    
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    const url = URL.createObjectURL(blob);
+    link.setAttribute('href', url);
+    link.setAttribute('download', `expense-report-${new Date().toISOString().split('T')[0]}.csv`);
+    link.style.visibility = 'hidden';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    
+    setExportMenuAnchor(null);
+  };
+  
+  const exportToPDF = () => {
+    const filteredExpenses = getFilteredExpenses();
+    const stats = getExpenseStatistics();
+    
+    const doc = new jsPDF();
+    
+    // Header
+    doc.setFontSize(18);
+    doc.text('Wagh Rental Properties', 20, 20);
+    doc.setFontSize(14);
+    doc.text('Expense Report', 20, 30);
+    doc.setFontSize(10);
+    doc.text(`Generated on: ${new Date().toLocaleDateString()}`, 20, 40);
+    
+    // Summary Stats
+    doc.setFontSize(12);
+    doc.text('Summary:', 20, 55);
+    doc.setFontSize(10);
+    doc.text(`Total Expenses: $${stats.totalAmount.toFixed(2)} (${stats.totalCount} items)`, 20, 65);
+    doc.text(`This Month: $${stats.thisMonthAmount.toFixed(2)} (${stats.thisMonthCount} items)`, 20, 75);
+    doc.text(`This Year: $${stats.thisYearAmount.toFixed(2)} (${stats.thisYearCount} items)`, 20, 85);
+    
+    // Table
+    const tableData = filteredExpenses.map(expense => [
+      new Date(expense.date).toLocaleDateString(),
+      properties.find(p => p.id === expense.propertyId)?.name || 'Unknown',
+      expense.category,
+      `$${expense.amount}`,
+      (expense.description || '').substring(0, 50) + (expense.description?.length > 50 ? '...' : '')
+    ]);
+    
+    doc.autoTable({
+      head: [['Date', 'Property', 'Category', 'Amount', 'Description']],
+      body: tableData,
+      startY: 95,
+      styles: { fontSize: 8 },
+      headStyles: { fillColor: [41, 128, 185] },
+    });
+    
+    doc.save(`expense-report-${new Date().toISOString().split('T')[0]}.pdf`);
+    setExportMenuAnchor(null);
   };
 
   const handleChange = (e) => {
@@ -292,9 +445,18 @@ const Expenses = () => {
           <Typography variant="h4" component="h1">
             Expenses
           </Typography>
-          <Button variant="contained" color="primary" onClick={handleOpen}>
-            Add Expense
-          </Button>
+          <Stack direction="row" spacing={2}>
+            <Button 
+              variant="outlined" 
+              startIcon={<DownloadIcon />} 
+              onClick={(e) => setExportMenuAnchor(e.currentTarget)}
+            >
+              Export
+            </Button>
+            <Button variant="contained" color="primary" onClick={handleOpen}>
+              Add Expense
+            </Button>
+          </Stack>
         </Box>
 
         {error && (
@@ -312,12 +474,48 @@ const Expenses = () => {
                 <Card>
                   <CardContent>
                     <Box sx={{ display: 'flex', alignItems: 'center' }}>
-                      <TrendingUpIcon color="primary" sx={{ mr: 1 }} />
+                      <CalendarTodayIcon color="primary" sx={{ mr: 1 }} />
                       <Typography variant="h6" component="div">
-                        Total Expenses
+                        This Month
                       </Typography>
                     </Box>
                     <Typography variant="h4" color="primary">
+                      ${stats.thisMonthAmount.toFixed(2)}
+                    </Typography>
+                    <Typography variant="body2" color="text.secondary">
+                      {stats.thisMonthCount} expenses
+                    </Typography>
+                  </CardContent>
+                </Card>
+              </Grid>
+              <Grid item xs={12} sm={6} md={3}>
+                <Card>
+                  <CardContent>
+                    <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                      <DateRangeIcon color="secondary" sx={{ mr: 1 }} />
+                      <Typography variant="h6" component="div">
+                        This Year
+                      </Typography>
+                    </Box>
+                    <Typography variant="h4" color="secondary">
+                      ${stats.thisYearAmount.toFixed(2)}
+                    </Typography>
+                    <Typography variant="body2" color="text.secondary">
+                      {stats.thisYearCount} expenses
+                    </Typography>
+                  </CardContent>
+                </Card>
+              </Grid>
+              <Grid item xs={12} sm={6} md={3}>
+                <Card>
+                  <CardContent>
+                    <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                      <TrendingUpIcon color="success" sx={{ mr: 1 }} />
+                      <Typography variant="h6" component="div">
+                        Current View
+                      </Typography>
+                    </Box>
+                    <Typography variant="h4" color="success">
                       ${stats.totalAmount.toFixed(2)}
                     </Typography>
                     <Typography variant="body2" color="text.secondary">
@@ -330,44 +528,11 @@ const Expenses = () => {
                 <Card>
                   <CardContent>
                     <Box sx={{ display: 'flex', alignItems: 'center' }}>
-                      <CategoryIcon color="secondary" sx={{ mr: 1 }} />
+                      <CategoryIcon color="info" sx={{ mr: 1 }} />
                       <Typography variant="h6" component="div">
-                        Categories
+                        Top Category
                       </Typography>
                     </Box>
-                    <Typography variant="h4" color="secondary">
-                      {Object.keys(stats.categoryBreakdown).length}
-                    </Typography>
-                    <Typography variant="body2" color="text.secondary">
-                      Active categories
-                    </Typography>
-                  </CardContent>
-                </Card>
-              </Grid>
-              <Grid item xs={12} sm={6} md={3}>
-                <Card>
-                  <CardContent>
-                    <Box sx={{ display: 'flex', alignItems: 'center' }}>
-                      <HomeIcon color="success" sx={{ mr: 1 }} />
-                      <Typography variant="h6" component="div">
-                        Properties
-                      </Typography>
-                    </Box>
-                    <Typography variant="h4" color="success">
-                      {Object.keys(stats.propertyBreakdown).length}
-                    </Typography>
-                    <Typography variant="body2" color="text.secondary">
-                      With expenses
-                    </Typography>
-                  </CardContent>
-                </Card>
-              </Grid>
-              <Grid item xs={12} sm={6} md={3}>
-                <Card>
-                  <CardContent>
-                    <Typography variant="h6" component="div">
-                      Top Category
-                    </Typography>
                     {(() => {
                       const topCategory = Object.entries(stats.categoryBreakdown)
                         .sort(([,a], [,b]) => b - a)[0];
@@ -392,6 +557,59 @@ const Expenses = () => {
             </Grid>
           );
         })()}
+
+        {/* Date Range Filters */}
+        <Box sx={{ mb: 2 }}>
+          <Typography variant="h6" sx={{ mb: 2, display: 'flex', alignItems: 'center' }}>
+            <DateRangeIcon sx={{ mr: 1 }} />
+            Time Range
+          </Typography>
+          <ToggleButtonGroup
+            value={dateRange}
+            exclusive
+            onChange={handleDateRangeChange}
+            aria-label="date range"
+            sx={{ mb: 2 }}
+          >
+            <ToggleButton value="all" aria-label="all time">
+              All Time
+            </ToggleButton>
+            <ToggleButton value="thisMonth" aria-label="this month">
+              This Month
+            </ToggleButton>
+            <ToggleButton value="thisYear" aria-label="this year">
+              This Year
+            </ToggleButton>
+            <ToggleButton value="lastMonth" aria-label="last month">
+              Last Month
+            </ToggleButton>
+            <ToggleButton value="lastYear" aria-label="last year">
+              Last Year
+            </ToggleButton>
+            <ToggleButton value="custom" aria-label="custom range">
+              Custom
+            </ToggleButton>
+          </ToggleButtonGroup>
+          
+          {dateRange === 'custom' && (
+            <Box sx={{ display: 'flex', gap: 2, mt: 2 }}>
+              <TextField
+                type="date"
+                label="Start Date"
+                value={customStartDate}
+                onChange={(e) => setCustomStartDate(e.target.value)}
+                InputLabelProps={{ shrink: true }}
+              />
+              <TextField
+                type="date"
+                label="End Date"
+                value={customEndDate}
+                onChange={(e) => setCustomEndDate(e.target.value)}
+                InputLabelProps={{ shrink: true }}
+              />
+            </Box>
+          )}
+        </Box>
 
         {/* Filters */}
         <Box sx={{ mb: 3, p: 2, bgcolor: 'background.paper', borderRadius: 1, border: 1, borderColor: 'divider' }}>
@@ -675,6 +893,16 @@ const Expenses = () => {
             </Button>
           </DialogActions>
         </Dialog>
+
+        {/* Export Menu */}
+        <Menu
+          anchorEl={exportMenuAnchor}
+          open={Boolean(exportMenuAnchor)}
+          onClose={() => setExportMenuAnchor(null)}
+        >
+          <MenuItem onClick={exportToCSV}>Export as CSV</MenuItem>
+          <MenuItem onClick={exportToPDF}>Export as PDF</MenuItem>
+        </Menu>
       </Box>
     </Container>
   );

@@ -7,57 +7,58 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-model Property {
-  id          String     @id @default(uuid())
-  name        String
-  address     String
-  type        String
-  units       Int
-  createdAt   DateTime   @default(now())
-  updatedAt   DateTime   @updatedAt
-  tenants     Tenant[]
-  expenses    Expense[]
-}
-
-model Tenant {
-  id          String     @id @default(uuid())
-  name        String
-  email       String
-  phone       String
-  propertyId  String
-  property    Property   @relation(fields: [propertyId], references: [id])
-  rentAmount  Float
-  leaseStart  DateTime
-  leaseEnd    DateTime
-  isArchived  Boolean  @default(false)
-  createdAt   DateTime   @default(now())
-  updatedAt   DateTime   @updatedAt
-  payments    Payment[]
-  expenses    Expense[]
-}
-
-model Payment {
-  id            String   @id @default(uuid())
-  tenantId      String
-  tenant        Tenant   @relation(fields: [tenantId], references: [id])
-  amount        Float
-  date          DateTime
-  paymentMethod String
-  notes         String?
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
-}
-
 model Expense {
-  id          String   @id @default(uuid())
+  id          String   @id
   description String
   amount      Float
   date        DateTime
   category    String
   propertyId  String
-  property    Property @relation(fields: [propertyId], references: [id])
   tenantId    String?
-  tenant      Tenant?  @relation(fields: [tenantId], references: [id])
   createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-} 
+  updatedAt   DateTime
+  Property    Property @relation(fields: [propertyId], references: [id])
+  Tenant      Tenant?  @relation(fields: [tenantId], references: [id])
+}
+
+model Payment {
+  id            String   @id
+  tenantId      String
+  amount        Float
+  date          DateTime
+  paymentMethod String
+  status        String   @default("completed")
+  notes         String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime
+  Tenant        Tenant   @relation(fields: [tenantId], references: [id])
+}
+
+model Property {
+  id        String    @id
+  name      String
+  address   String
+  type      String
+  units     Int
+  createdAt DateTime  @default(now())
+  updatedAt DateTime
+  Expense   Expense[]
+  Tenant    Tenant[]
+}
+
+model Tenant {
+  id         String    @id
+  name       String
+  email      String
+  phone      String
+  propertyId String
+  rentAmount Float
+  leaseStart DateTime
+  leaseEnd   DateTime
+  isArchived Boolean   @default(false)
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime
+  Expense    Expense[]
+  Payment    Payment[]
+  Property   Property  @relation(fields: [propertyId], references: [id])
+}

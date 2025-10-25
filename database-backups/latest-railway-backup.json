@@ -1,0 +1,11 @@
+{
+  "backup_dir": "railway-backup-2025-10-25T23-38-41-847Z",
+  "timestamp": "2025-10-25T23:38:42.103Z",
+  "counts": {
+    "properties": 2,
+    "tenants": 17,
+    "payments": 107,
+    "expenses": 167,
+    "total": 293
+  }
+}
