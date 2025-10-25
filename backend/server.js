@@ -37,8 +37,8 @@ app.get('/api/properties', async (req, res) => {
   try {
     const properties = await prisma.property.findMany({
       include: {
-        tenants: true,
-        expenses: true,
+        Tenant: true,
+        Expense: true,
       },
     });
     res.json(properties);
@@ -53,8 +53,8 @@ app.post('/api/properties', async (req, res) => {
     const property = await prisma.property.create({
       data: req.body,
       include: {
-        tenants: true,
-        expenses: true,
+        Tenant: true,
+        Expense: true,
       },
     });
     res.json(property);
@@ -69,8 +69,8 @@ app.get('/api/properties/:id', async (req, res) => {
     const property = await prisma.property.findUnique({
       where: { id: req.params.id },
       include: {
-        tenants: true,
-        expenses: true,
+        Tenant: true,
+        Expense: true,
       },
     });
     if (!property) {
@@ -114,8 +114,8 @@ app.put('/api/properties/:id', async (req, res) => {
       where: { id: req.params.id },
       data: updateData,
       include: {
-        tenants: true,
-        expenses: true,
+        Tenant: true,
+        Expense: true,
       },
     });
     res.json(property);
@@ -137,7 +137,7 @@ app.get('/api/tenants', async (req, res) => {
     const tenants = await prisma.tenant.findMany({
       where,
       include: {
-        property: true,
+        Property: true,
       },
       orderBy: {
         createdAt: 'desc',
@@ -158,7 +158,7 @@ app.put('/api/tenants/:id/archive', async (req, res) => {
       where: { id },
       data: { isArchived: true },
       include: {
-        property: true,
+        Property: true,
       },
     });
     res.json(tenant);
@@ -176,7 +176,7 @@ app.put('/api/tenants/:id/unarchive', async (req, res) => {
       where: { id },
       data: { isArchived: false },
       include: {
-        property: true,
+        Property: true,
       },
     });
     res.json(tenant);
@@ -192,7 +192,7 @@ app.post('/api/tenants', async (req, res) => {
     const tenant = await prisma.tenant.create({
       data: req.body,
       include: {
-        property: true,
+        Property: true,
         payments: true,
       },
     });
@@ -208,7 +208,7 @@ app.get('/api/tenants/:id', async (req, res) => {
     const tenant = await prisma.tenant.findUnique({
       where: { id: req.params.id },
       include: {
-        property: true,
+        Property: true,
         payments: true,
       },
     });
@@ -238,7 +238,7 @@ app.get('/api/payments', async (req, res) => {
   try {
     const payments = await prisma.payment.findMany({
       include: {
-        tenant: true,
+        Tenant: true,
       },
       orderBy: {
         date: 'desc',
@@ -254,7 +254,7 @@ app.get('/api/payments', async (req, res) => {
 // Add a new payment
 app.post('/api/payments', async (req, res) => {
   try {
-    const { tenantId, amount, date, paymentMethod, notes } = req.body;
+    const { tenantId, amount, date, paymentMethod, notes, status } = req.body;
 
     // Validate required fields
     if (!tenantId || !amount || !date || !paymentMethod) {
@@ -278,6 +278,16 @@ app.post('/api/payments', async (req, res) => {
       });
     }
 
+    // Validate status if provided
+    const validStatuses = ['completed', 'pending', 'late', 'partial'];
+    const paymentStatus = status || 'completed';
+    if (!validStatuses.includes(paymentStatus)) {
+      return res.status(400).json({ 
+        error: 'Invalid status',
+        details: 'Status must be one of: completed, pending, late, partial'
+      });
+    }
+
     // Create the payment
     const payment = await prisma.payment.create({
       data: {
@@ -285,10 +295,11 @@ app.post('/api/payments', async (req, res) => {
         amount: parsedAmount,
         date: new Date(date),
         paymentMethod,
+        status: paymentStatus,
         notes: notes || null
       },
       include: {
-        tenant: true,
+        Tenant: true,
       },
     });
 
@@ -318,7 +329,7 @@ app.delete('/api/payments/:id', async (req, res) => {
 // Update a payment
 app.put('/api/payments/:id', async (req, res) => {
   try {
-    const { tenantId, amount, date, paymentMethod, notes } = req.body;
+    const { tenantId, amount, date, paymentMethod, notes, status } = req.body;
 
     // Validate required fields
     if (!tenantId || !amount || !date || !paymentMethod) {
@@ -342,6 +353,15 @@ app.put('/api/payments/:id', async (req, res) => {
       });
     }
 
+    // Validate status if provided
+    const validStatuses = ['completed', 'pending', 'late', 'partial'];
+    if (status && !validStatuses.includes(status)) {
+      return res.status(400).json({ 
+        error: 'Invalid status',
+        details: 'Status must be one of: completed, pending, late, partial'
+      });
+    }
+
     // Check if payment exists
     const existingPayment = await prisma.payment.findUnique({
       where: { id: req.params.id },
@@ -359,10 +379,11 @@ app.put('/api/payments/:id', async (req, res) => {
         amount: parsedAmount,
         date: new Date(date),
         paymentMethod,
+        status: status || existingPayment.status,
         notes: notes || null
       },
       include: {
-        tenant: true,
+        Tenant: true,
       },
     });
 
@@ -371,6 +392,83 @@ app.put('/api/payments/:id', async (req, res) => {
     console.error('Error updating payment:', error);
     res.status(500).json({ 
       error: 'Failed to update payment',
+      details: error.message 
+    });
+  }
+});
+
+// Generate pending payments for all active tenants for the current month
+app.post('/api/payments/generate-pending', async (req, res) => {
+  try {
+    const { month, year } = req.body;
+    
+    // Use provided month/year or default to current month
+    const now = new Date();
+    const targetMonth = month || now.getMonth() + 1;
+    const targetYear = year || now.getFullYear();
+    
+    // Create date for the 1st of the target month
+    const dueDate = new Date(targetYear, targetMonth - 1, 1);
+    
+    // Get all active tenants
+    const activeTenants = await prisma.tenant.findMany({
+      where: { isArchived: false }
+    });
+    
+    if (activeTenants.length === 0) {
+      return res.json({ 
+        message: 'No active tenants found',
+        created: 0 
+      });
+    }
+    
+    // Check which tenants already have payments for this month
+    const startOfMonth = new Date(targetYear, targetMonth - 1, 1);
+    const endOfMonth = new Date(targetYear, targetMonth, 0, 23, 59, 59);
+    
+    const existingPayments = await prisma.payment.findMany({
+      where: {
+        date: {
+          gte: startOfMonth,
+          lte: endOfMonth
+        }
+      }
+    });
+    
+    const tenantsWithPayments = new Set(existingPayments.map(p => p.tenantId));
+    
+    // Create pending payments for tenants without payments
+    const tenantsNeedingPayments = activeTenants.filter(
+      tenant => !tenantsWithPayments.has(tenant.id)
+    );
+    
+    const createdPayments = [];
+    for (const tenant of tenantsNeedingPayments) {
+      const payment = await prisma.payment.create({
+        data: {
+          tenantId: tenant.id,
+          amount: tenant.rentAmount,
+          date: dueDate,
+          paymentMethod: 'bank_transfer',
+          status: 'pending',
+          notes: `Auto-generated for ${new Date(targetYear, targetMonth - 1).toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}`
+        },
+        include: {
+          tenant: true
+        }
+      });
+      createdPayments.push(payment);
+    }
+    
+    res.json({ 
+      message: `Generated ${createdPayments.length} pending payments`,
+      created: createdPayments.length,
+      payments: createdPayments
+    });
+  } catch (error) {
+    console.error('Error generating pending payments:', error);
+    res.status(500).json({ 
+      error: 'Failed to generate pending payments',
       details: error.message 
     });
   }

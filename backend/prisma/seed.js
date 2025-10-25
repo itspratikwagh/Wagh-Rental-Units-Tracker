@@ -9,7 +9,6 @@ async function main() {
       address: '123 Main Street, Edmonton, Alberta T5J 2K1',
       type: 'Apartment Building',
       units: 4,
-      rentAmount: 1500.00,
       tenants: {
         create: [
           {
@@ -49,7 +48,74 @@ async function main() {
     },
   });
 
-  console.log('Seed data created:', edmontonProperty);
+  console.log('Property created:', edmontonProperty);
+
+  // Get all tenants to create payments for them
+  const tenants = await prisma.tenant.findMany();
+  
+  // Create payments for the last 6 months
+  const payments = [];
+  const now = new Date();
+  for (let i = 0; i < 6; i++) {
+    for (const tenant of tenants) {
+      const paymentDate = new Date(now.getFullYear(), now.getMonth() - i, 5);
+      // Vary the status for demonstration purposes
+      let status = 'completed';
+      if (i === 0 && tenant.name === 'Sarah Williams') {
+        status = 'pending'; // One pending payment
+      } else if (i === 1 && tenant.name === 'Mike Johnson') {
+        status = 'late'; // One late payment
+      }
+      
+      payments.push({
+        tenantId: tenant.id,
+        amount: tenant.rentAmount,
+        date: paymentDate,
+        paymentMethod: 'bank_transfer',
+        status: status,
+        notes: `Rent payment for ${paymentDate.toLocaleString('default', { month: 'long', year: 'numeric' })}`,
+      });
+    }
+  }
+
+  await prisma.payment.createMany({ data: payments });
+  console.log(`Created ${payments.length} payments`);
+
+  // Create some expenses
+  const expenses = [
+    {
+      description: 'Plumbing repair - Unit 1',
+      amount: 250.00,
+      date: new Date(now.getFullYear(), now.getMonth() - 1, 15),
+      category: 'Maintenance',
+      propertyId: edmontonProperty.id,
+    },
+    {
+      description: 'Property tax',
+      amount: 1200.00,
+      date: new Date(now.getFullYear(), now.getMonth() - 2, 1),
+      category: 'Tax',
+      propertyId: edmontonProperty.id,
+    },
+    {
+      description: 'Building insurance',
+      amount: 800.00,
+      date: new Date(now.getFullYear(), now.getMonth() - 3, 10),
+      category: 'Insurance',
+      propertyId: edmontonProperty.id,
+    },
+    {
+      description: 'Landscaping service',
+      amount: 150.00,
+      date: new Date(now.getFullYear(), now.getMonth(), 5),
+      category: 'Maintenance',
+      propertyId: edmontonProperty.id,
+    },
+  ];
+
+  await prisma.expense.createMany({ data: expenses });
+  console.log(`Created ${expenses.length} expenses`);
+  console.log('Seed completed successfully!');
 }
 
 main()
