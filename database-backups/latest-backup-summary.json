@@ -1,0 +1,17 @@
+{
+  "backupTimestamp": "2025-10-25T17:41:42.781Z",
+  "backupDate": "10/25/2025",
+  "records": {
+    "properties": 2,
+    "tenants": 17,
+    "payments": 107,
+    "expenses": 167
+  },
+  "totalRecords": 293,
+  "files": [
+    "properties-backup-2025-10-25T17-41-42-703Z.json",
+    "tenants-backup-2025-10-25T17-41-42-703Z.json",
+    "payments-backup-2025-10-25T17-41-42-703Z.json",
+    "expenses-backup-2025-10-25T17-41-42-703Z.json"
+  ]
+}
