@@ -8,5 +8,12 @@ export default defineConfig({
   build: {
     outDir: 'dist',
     assetsDir: 'assets',
+  },
+  preview: {
+    allowedHosts: [
+      'inspiring-reprieve-production-62fc.up.railway.app',
+      'localhost',
+      '127.0.0.1'
+    ],
   }
 })
