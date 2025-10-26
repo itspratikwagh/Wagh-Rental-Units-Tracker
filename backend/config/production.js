@@ -8,7 +8,11 @@ module.exports = {
   server: {
     port: process.env.PORT || 3005,
     cors: {
-      origins: process.env.ALLOWED_ORIGINS ? process.env.ALLOWED_ORIGINS.split(',') : ['https://your-frontend-domain.vercel.app']
+      origins: process.env.ALLOWED_ORIGINS ? process.env.ALLOWED_ORIGINS.split(',') : [
+        'https://your-frontend-domain.vercel.app',
+        'https://*.vercel.app',
+        'http://localhost:5173'
+      ]
     }
   },
 

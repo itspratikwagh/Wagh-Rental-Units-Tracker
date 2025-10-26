@@ -8,7 +8,7 @@ datasource db {
 }
 
 model Expense {
-  id          String   @id
+  id          String   @id @default(uuid())
   description String
   amount      Float
   date        DateTime
@@ -22,7 +22,7 @@ model Expense {
 }
 
 model Payment {
-  id            String   @id
+  id            String   @id @default(uuid())
   tenantId      String
   amount        Float
   date          DateTime
@@ -35,7 +35,7 @@ model Payment {
 }
 
 model Property {
-  id        String    @id
+  id        String    @id @default(uuid())
   name      String
   address   String
   type      String
@@ -47,7 +47,7 @@ model Property {
 }
 
 model Tenant {
-  id         String    @id
+  id         String    @id @default(uuid())
   name       String
   email      String
   phone      String
