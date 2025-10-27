@@ -199,7 +199,7 @@ app.post('/api/tenants', async (req, res) => {
       },
       include: {
         Property: true,
-        payments: true,
+        Payment: true,
       },
     });
     res.json(tenant);
@@ -215,7 +215,7 @@ app.get('/api/tenants/:id', async (req, res) => {
       where: { id: req.params.id },
       include: {
         Property: true,
-        payments: true,
+        Payment: true,
       },
     });
     if (!tenant) {
