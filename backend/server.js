@@ -51,7 +51,10 @@ app.get('/api/properties', async (req, res) => {
 app.post('/api/properties', async (req, res) => {
   try {
     const property = await prisma.property.create({
-      data: req.body,
+      data: {
+        ...req.body,
+        updatedAt: new Date()
+      },
       include: {
         Tenant: true,
         Expense: true,
@@ -190,7 +193,10 @@ app.put('/api/tenants/:id/unarchive', async (req, res) => {
 app.post('/api/tenants', async (req, res) => {
   try {
     const tenant = await prisma.tenant.create({
-      data: req.body,
+      data: {
+        ...req.body,
+        updatedAt: new Date()
+      },
       include: {
         Property: true,
         payments: true,
@@ -296,7 +302,8 @@ app.post('/api/payments', async (req, res) => {
         date: new Date(date),
         paymentMethod,
         status: paymentStatus,
-        notes: notes || null
+        notes: notes || null,
+        updatedAt: new Date()
       },
       include: {
         Tenant: true,
@@ -451,7 +458,8 @@ app.post('/api/payments/generate-pending', async (req, res) => {
           date: dueDate,
           paymentMethod: 'bank_transfer',
           status: 'pending',
-          notes: `Auto-generated for ${new Date(targetYear, targetMonth - 1).toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}`
+          notes: `Auto-generated for ${new Date(targetYear, targetMonth - 1).toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}`,
+          updatedAt: new Date()
         },
         include: {
           tenant: true
@@ -505,6 +513,7 @@ app.post('/api/expenses', async (req, res) => {
         category,
         description,
         propertyId,
+        updatedAt: new Date()
       },
     });
 
