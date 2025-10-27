@@ -153,6 +153,27 @@ app.get('/api/tenants', async (req, res) => {
   }
 });
 
+// Update a tenant
+app.put('/api/tenants/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const updateData = { ...req.body, updatedAt: new Date() };
+    
+    const tenant = await prisma.tenant.update({
+      where: { id },
+      data: updateData,
+      include: {
+        Property: true,
+        Payment: true,
+      },
+    });
+    res.json(tenant);
+  } catch (error) {
+    console.error('Error updating tenant:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Archive a tenant
 app.put('/api/tenants/:id/archive', async (req, res) => {
   try {
@@ -462,7 +483,7 @@ app.post('/api/payments/generate-pending', async (req, res) => {
           updatedAt: new Date()
         },
         include: {
-          tenant: true
+          Tenant: true
         }
       });
       createdPayments.push(payment);
