@@ -8,5 +8,5 @@
     "expenses": 167,
     "total": 293
   },
-  "database_url": "postgresql://postgres:***REMOVED***@crossover.proxy.rlwy.net:59900/railway"
+  "database_url": "[REDACTED — set DATABASE_URL env var]"
 }

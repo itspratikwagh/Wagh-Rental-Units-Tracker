@@ -75,21 +75,9 @@ The application will be available at:
 
 ## Cloud Deployment (Railway)
 
-The application is currently deployed with a Railway PostgreSQL database containing:
-- **Properties**: 2
-- **Tenants**: 17
-- **Payments**: 107
-- **Expenses**: 167
-- **Total Records**: 293
+The application is deployed with a Railway PostgreSQL database.
 
-### Railway Database Connection
-- **Database URL**: `postgresql://postgres:***REMOVED***@crossover.proxy.rlwy.net:59900/railway`
-- **Status**: ✅ Active and fully populated with production data
-
-### Database Backups
-- All database backups are stored in the `database-backups/` directory
-- Latest Railway backup: `database-backups/latest-railway-backup.json`
-- Backup files include complete JSON exports of all tables
+Set the `DATABASE_URL` environment variable in your Railway service settings. **Never commit database credentials to the repository.**
 
 ## Contributing
 

@@ -17,7 +17,7 @@ Deploy your rental management system to the cloud:
 ### 1.2 Configure Environment Variables
 In Railway dashboard, add these environment variables:
 ```
-DATABASE_URL=postgresql://postgres:***REMOVED***@crossover.proxy.rlwy.net:59900/railway
+DATABASE_URL=<your-railway-database-url>
 NODE_ENV=production
 PORT=3005
 ALLOWED_ORIGINS=https://your-vercel-app.vercel.app,https://*.vercel.app

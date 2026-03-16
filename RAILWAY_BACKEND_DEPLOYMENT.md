@@ -17,7 +17,7 @@ Your database is already on Railway, now let's deploy your backend API to Railwa
 In your Railway backend service, add these environment variables:
 
 ```
-DATABASE_URL=postgresql://postgres:***REMOVED***@crossover.proxy.rlwy.net:59900/railway
+DATABASE_URL=<your-railway-database-url>
 NODE_ENV=production
 PORT=3005
 ```

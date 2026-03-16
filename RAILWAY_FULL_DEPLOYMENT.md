@@ -29,7 +29,7 @@ Deploy both your backend and frontend to Railway for a unified hosting solution.
 In your Railway backend service, go to "Variables" tab and add:
 
 ```bash
-DATABASE_URL=postgresql://postgres:***REMOVED***@crossover.proxy.rlwy.net:59900/railway
+DATABASE_URL=<your-railway-database-url>
 NODE_ENV=production
 ALLOWED_ORIGINS=https://your-frontend-url.railway.app
 ```
