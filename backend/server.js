@@ -1,10 +1,15 @@
 const express = require('express');
 const cors = require('cors');
+const cron = require('node-cron');
 const { PrismaClient } = require('@prisma/client');
 require('dotenv').config();
 
 const app = express();
 const prisma = new PrismaClient();
+
+// Mount Gmail and Chat routes
+const gmailRoutes = require('./routes/gmail')(prisma);
+const chatRoutes = require('./routes/chat')(prisma);
 
 // Load configuration based on environment
 const config = require(`./config/${process.env.NODE_ENV || 'development'}.js`);
@@ -587,6 +592,29 @@ app.put('/api/expenses/:id', async (req, res) => {
     res.json(expense);
   } catch (error) {
     res.status(500).json({ error: error.message });
+  }
+});
+
+// Gmail and Chat API routes
+app.use('/api/gmail', gmailRoutes);
+app.use('/api/chat', chatRoutes);
+
+// Health check
+app.get('/health', (req, res) => {
+  res.json({ status: 'ok' });
+});
+
+// Scan Gmail every 6 hours (if connected)
+cron.schedule('0 */6 * * *', async () => {
+  try {
+    const { scanGmail } = require('./services/gmail');
+    const results = await scanGmail(prisma);
+    console.log(`[Cron] Gmail scan: ${results.interac} payments, ${results.utility} utility bills`);
+  } catch (err) {
+    // Not connected or scan failed — skip silently
+    if (!err.message.includes('not connected')) {
+      console.error('[Cron] Gmail scan error:', err.message);
+    }
   }
 });
 

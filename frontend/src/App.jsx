@@ -14,6 +14,8 @@ import Properties from './components/Properties';
 import Tenants from './components/Tenants';
 import Payments from './components/Payments';
 import Expenses from './components/Expenses';
+import Inbox from './components/Inbox';
+import Chat from './components/Chat';
 
 const theme = createTheme({
   palette: {
@@ -57,6 +59,8 @@ function App() {
                 <Link component={RouterLink} to="/tenants" color="inherit">Tenants</Link>
                 <Link component={RouterLink} to="/payments" color="inherit">Payments</Link>
                 <Link component={RouterLink} to="/expenses" color="inherit">Expenses</Link>
+                <Link component={RouterLink} to="/inbox" color="inherit">Inbox</Link>
+                <Link component={RouterLink} to="/chat" color="inherit">Chat</Link>
               </Box>
             </Toolbar>
           </AppBar>
@@ -70,6 +74,8 @@ function App() {
                     <Route path="/tenants" element={<Tenants />} />
                     <Route path="/payments" element={<Payments />} />
                     <Route path="/expenses" element={<Expenses />} />
+                    <Route path="/inbox" element={<Inbox />} />
+                    <Route path="/chat" element={<Chat />} />
                   </Routes>
                 </Paper>
               </Grid>

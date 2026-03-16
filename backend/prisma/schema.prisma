@@ -62,3 +62,33 @@ model Tenant {
   Payment    Payment[]
   Property   Property  @relation(fields: [propertyId], references: [id])
 }
+
+model PendingTransaction {
+  id              String    @id @default(uuid())
+  type            String    // "payment" or "expense"
+  source          String    // "interac_email" or "utility_email"
+  gmailMessageId  String    @unique
+  senderName      String?
+  senderEmail     String?
+  amount          Float
+  date            DateTime
+  description     String?
+  category        String?
+  propertyId      String?
+  tenantId        String?
+  matchConfidence String    // "high", "medium", "none"
+  rawEmailSnippet String?
+  status          String    @default("pending") // "pending", "approved", "rejected"
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  reviewedAt      DateTime?
+}
+
+model GmailSyncState {
+  id            String    @id @default(uuid())
+  lastHistoryId String?
+  lastSyncAt    DateTime?
+  refreshToken  String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+}
