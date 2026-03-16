@@ -1,131 +1,110 @@
-# Deployment Guide for Wagh Rental Units Tracker
+# Deployment Guide
 
-## Overview
-This project consists of:
-- **Frontend**: React + Vite + Material-UI
-- **Backend**: Express.js + Prisma
-- **Database**: PostgreSQL
+## Architecture
 
-## Deployment Steps
+```
+Frontend (Vercel)  →  Backend (Railway)  →  Database (Railway PostgreSQL)
+React + Vite          Express + Prisma       PostgreSQL 17
+```
 
-### 1. Database Setup (Supabase - Recommended)
+## Prerequisites
 
-1. Go to [supabase.com](https://supabase.com) and create a free account
-2. Create a new project
-3. Go to Settings > Database to get your connection string
-4. Copy the connection string (it looks like: `postgresql://postgres:[password]@[host]:5432/postgres`)
+- [Railway](https://railway.app) account
+- [Vercel](https://vercel.com) account
+- GitHub repository connected to both
 
-### 2. Backend Deployment (Railway - Recommended)
+## Step 1: Set Up Railway PostgreSQL
 
-1. Go to [railway.app](https://railway.app) and create an account
-2. Connect your GitHub repository
-3. Create a new service from your repository
-4. Set the following environment variables:
-   ```
-   DATABASE_URL=your_supabase_connection_string
-   NODE_ENV=production
-   ALLOWED_ORIGINS=https://your-frontend-domain.vercel.app
-   ```
-5. Deploy the service
-6. Copy the generated domain (e.g., `https://your-app.railway.app`)
+1. Go to [railway.app](https://railway.app) and create a new project
+2. Click **"+ New"** → **"Database"** → **"PostgreSQL"**
+3. Once provisioned, go to the **Variables** tab and copy the `DATABASE_URL`
 
-### 3. Frontend Deployment (Vercel - Recommended)
+## Step 2: Deploy Backend to Railway
 
-1. Go to [vercel.com](https://vercel.com) and create an account
-2. Import your GitHub repository
-3. Set the following environment variable:
-   ```
-   VITE_API_URL=https://your-backend-domain.railway.app
-   ```
-4. Deploy the application
-5. Copy the generated domain (e.g., `https://your-app.vercel.app`)
+1. In the same Railway project, click **"+ New"** → **"GitHub Repo"**
+2. Select your `Wagh-Rental-Units-Tracker` repository
+3. Set **Root Directory** to `backend`
+4. Add these environment variables:
 
-### 4. Update CORS Configuration
+```
+DATABASE_URL=<copied from Step 1>
+NODE_ENV=production
+PORT=3005
+ALLOWED_ORIGINS=https://your-vercel-app.vercel.app
+```
 
-1. Go back to your Railway backend service
-2. Update the `ALLOWED_ORIGINS` environment variable with your Vercel frontend domain:
-   ```
-   ALLOWED_ORIGINS=https://your-app.vercel.app
-   ```
-3. Redeploy the backend service
+5. Railway will auto-deploy. Note your backend URL (e.g., `https://your-app.railway.app`)
 
-### 5. Database Migration
+### Run Migrations
 
-1. Connect to your Railway backend service via SSH or use Railway's console
-2. Run the following commands:
-   ```bash
-   npx prisma migrate deploy
-   npx prisma generate
-   ```
+In Railway's console (or locally with the Railway DATABASE_URL):
 
-## Alternative Deployment Options
+```bash
+cd backend
+npx prisma migrate deploy
+npx prisma generate
+```
 
-### Backend Alternatives:
-- **Render**: Similar to Railway, good free tier
-- **Heroku**: More established, but requires credit card for free tier
-- **DigitalOcean App Platform**: Good performance, paid service
+## Step 3: Deploy Frontend to Vercel
 
-### Frontend Alternatives:
-- **Netlify**: Great for static sites, good free tier
-- **GitHub Pages**: Free, but requires some configuration
-- **Firebase Hosting**: Google's offering, good integration with other Firebase services
+1. Go to [vercel.com](https://vercel.com) and import your GitHub repo
+2. Set **Root Directory** to `frontend`
+3. Add this environment variable:
 
-### Database Alternatives:
-- **Railway PostgreSQL**: If you're already using Railway for backend
-- **Neon**: Serverless PostgreSQL, good free tier
-- **PlanetScale**: MySQL-based, but very reliable
+```
+VITE_API_URL=https://your-railway-backend-url.railway.app
+```
+
+4. Deploy. Note your frontend URL.
+
+## Step 4: Update CORS
+
+Go back to your Railway backend service and update:
+
+```
+ALLOWED_ORIGINS=https://your-actual-vercel-url.vercel.app
+```
+
+Railway will auto-redeploy.
 
 ## Environment Variables Reference
 
-### Backend (.env)
-```
-DATABASE_URL=postgresql://username:password@host:port/database
-NODE_ENV=production
-ALLOWED_ORIGINS=https://your-frontend-domain.vercel.app
-PORT=3005
-```
+### Backend
 
-### Frontend (.env)
-```
-VITE_API_URL=https://your-backend-domain.railway.app
-```
+| Variable | Description |
+|----------|-------------|
+| `DATABASE_URL` | Railway PostgreSQL connection string |
+| `NODE_ENV` | `production` |
+| `PORT` | `3005` |
+| `ALLOWED_ORIGINS` | Comma-separated frontend URLs |
+
+### Frontend
+
+| Variable | Description |
+|----------|-------------|
+| `VITE_API_URL` | Railway backend URL |
 
 ## Troubleshooting
 
-### Common Issues:
+- **CORS errors**: Ensure `ALLOWED_ORIGINS` includes your exact Vercel domain
+- **Database connection fails**: Verify `DATABASE_URL` is correct in Railway variables
+- **Build errors**: Check that `backend/package.json` and `frontend/package.json` have all dependencies
+- **API not responding**: Check Railway deployment logs for errors
 
-1. **CORS Errors**: Make sure `ALLOWED_ORIGINS` includes your frontend domain
-2. **Database Connection**: Verify your `DATABASE_URL` is correct
-3. **Build Errors**: Check that all dependencies are in `package.json`
-4. **Environment Variables**: Ensure all required variables are set in your deployment platform
+## Local Development
 
-### Testing Deployment:
+```bash
+# Backend
+cd backend
+cp .env.example .env  # Edit with your local DB URL
+npm install
+npx prisma migrate dev
+npm run dev
 
-1. Test your backend API: `curl https://your-backend-domain.railway.app/api/properties`
-2. Test your frontend: Visit your Vercel domain
-3. Check browser console for any errors
+# Frontend (separate terminal)
+cd frontend
+npm install
+npm run dev
+```
 
-## Security Considerations
-
-1. **Environment Variables**: Never commit sensitive data to your repository
-2. **CORS**: Only allow necessary origins
-3. **Database**: Use strong passwords and consider connection pooling
-4. **HTTPS**: All production deployments should use HTTPS
-
-## Monitoring
-
-1. **Railway**: Built-in monitoring and logs
-2. **Vercel**: Analytics and performance monitoring
-3. **Supabase**: Database monitoring and backups
-
-## Cost Estimation
-
-### Free Tier (Recommended for starting):
-- **Supabase**: Free tier includes 500MB database, 2GB bandwidth
-- **Railway**: Free tier includes $5 credit monthly
-- **Vercel**: Free tier includes unlimited deployments, 100GB bandwidth
-
-### Paid Options (When you scale):
-- **Supabase Pro**: $25/month for 8GB database, 250GB bandwidth
-- **Railway**: Pay-as-you-use, typically $5-20/month for small apps
-- **Vercel Pro**: $20/month for team features and more bandwidth 
+Frontend: http://localhost:5173 | Backend: http://localhost:3005
