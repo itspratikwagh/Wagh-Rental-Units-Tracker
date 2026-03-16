@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { getAuthUrl, exchangeCode, scanGmail } = require('../services/gmail');
+const { getAuthUrl, exchangeCode, scanGmail, getRentMonth } = require('../services/gmail');
 
 module.exports = function (prisma) {
   // Start OAuth2 flow
@@ -60,9 +60,14 @@ module.exports = function (prisma) {
   });
 
   // Manual scan trigger
+  // Body can include { afterDate: "2025/10/25" } for historical scan
   router.post('/scan', async (req, res) => {
     try {
-      const results = await scanGmail(prisma);
+      const options = {};
+      if (req.body.afterDate) options.afterDate = req.body.afterDate;
+      if (req.body.maxResults) options.maxResults = req.body.maxResults;
+
+      const results = await scanGmail(prisma, options);
       res.json({
         message: `Scan complete. Found ${results.interac} payment(s) and ${results.utility} utility bill(s).`,
         ...results,
@@ -101,7 +106,15 @@ module.exports = function (prisma) {
       }
 
       const amount = overrides.amount != null ? parseFloat(overrides.amount) : pending.amount;
-      const date = overrides.date ? new Date(overrides.date) : pending.date;
+      // For payments, use the rent month (1st of month) as the accounting date
+      let date;
+      if (overrides.date) {
+        date = new Date(overrides.date);
+      } else if (pending.type === 'payment') {
+        date = getRentMonth(pending.date);
+      } else {
+        date = pending.date;
+      }
 
       let created;
 

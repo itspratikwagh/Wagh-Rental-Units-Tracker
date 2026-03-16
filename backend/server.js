@@ -618,7 +618,90 @@ cron.schedule('0 */6 * * *', async () => {
   }
 });
 
+// Generate recurring expenses daily at midnight
+cron.schedule('0 0 * * *', async () => {
+  try {
+    const { generateRecurringExpenses } = require('./services/recurring');
+    const results = await generateRecurringExpenses(prisma);
+    if (results.created > 0) {
+      console.log(`[Cron] Recurring expenses: created ${results.created}`);
+    }
+  } catch (err) {
+    console.error('[Cron] Recurring expenses error:', err.message);
+  }
+});
+
+// --- Recurring Expense API ---
+
+// List all recurring expense templates
+app.get('/api/recurring-expenses', async (req, res) => {
+  try {
+    const templates = await prisma.recurringExpense.findMany({
+      orderBy: { category: 'asc' },
+    });
+    // Attach property name
+    const properties = await prisma.property.findMany();
+    const propMap = Object.fromEntries(properties.map(p => [p.id, p]));
+    const result = templates.map(t => ({
+      ...t,
+      Property: propMap[t.propertyId] || null,
+    }));
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to fetch recurring expenses' });
+  }
+});
+
+// Create a recurring expense template
+app.post('/api/recurring-expenses', async (req, res) => {
+  try {
+    const { description, amount, category, propertyId, frequency, dayOfWeek, dayOfMonth } = req.body;
+    const template = await prisma.recurringExpense.create({
+      data: { description, amount, category, propertyId, frequency, dayOfWeek, dayOfMonth },
+    });
+    res.json(template);
+  } catch (error) {
+    console.error('Error creating recurring expense:', error);
+    res.status(500).json({ error: 'Failed to create recurring expense' });
+  }
+});
+
+// Update a recurring expense template
+app.put('/api/recurring-expenses/:id', async (req, res) => {
+  try {
+    const template = await prisma.recurringExpense.update({
+      where: { id: req.params.id },
+      data: req.body,
+    });
+    res.json(template);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to update recurring expense' });
+  }
+});
+
+// Delete a recurring expense template
+app.delete('/api/recurring-expenses/:id', async (req, res) => {
+  try {
+    await prisma.recurringExpense.delete({ where: { id: req.params.id } });
+    res.json({ message: 'Deleted' });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to delete recurring expense' });
+  }
+});
+
+// Trigger recurring expense generation manually
+app.post('/api/recurring-expenses/generate', async (req, res) => {
+  try {
+    const { generateRecurringExpenses } = require('./services/recurring');
+    const results = await generateRecurringExpenses(prisma);
+    res.json(results);
+  } catch (error) {
+    console.error('Recurring generation error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 const PORT = process.env.PORT || 3005;
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT} in ${process.env.NODE_ENV || 'development'} mode`);
-}); 
+});

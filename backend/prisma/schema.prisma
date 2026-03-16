@@ -84,6 +84,21 @@ model PendingTransaction {
   reviewedAt      DateTime?
 }
 
+model RecurringExpense {
+  id          String   @id @default(uuid())
+  description String
+  amount      Float
+  category    String
+  propertyId  String
+  frequency   String   // "weekly", "monthly"
+  dayOfWeek   Int?     // 0=Sun..6=Sat (for weekly)
+  dayOfMonth  Int?     // 1-28 (for monthly)
+  isActive    Boolean  @default(true)
+  lastGenerated DateTime? // last date an expense was auto-created
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
 model GmailSyncState {
   id            String    @id @default(uuid())
   lastHistoryId String?

@@ -24,6 +24,24 @@ const UTILITY_PARSERS = [
     category: 'Utility Bills',
     propertyKey: 'edmonton',
   },
+  {
+    name: 'Shaw Internet',
+    fromPattern: /shaw/i,
+    subjectPattern: /shaw bill is ready/i,
+    amountPatterns: [
+      /total\s+(?:amount\s+)?(?:due|owing|payable)[:\s]*\$?([\d,]+\.?\d*)/i,
+      /amount\s+due[:\s]*\$?([\d,]+\.?\d*)/i,
+      /\$\s*([\d,]+\.\d{2})/,
+    ],
+    category: 'Internet Bills',
+    // Property determined by account number in email body:
+    // 099-0137-3821 = Edmonton, 099-0203-0540 = Calgary
+    propertyKey: 'shaw_by_account',
+    accountMap: {
+      '099-0137-3821': 'edmonton',
+      '099-0203-0540': 'calgary',
+    },
+  },
 ];
 
 function createOAuth2Client() {
@@ -55,6 +73,20 @@ async function getGmailClient(refreshToken) {
   return google.gmail({ version: 'v1', auth: oauth2Client });
 }
 
+// Compute which rent month a payment applies to.
+// Rule: payment after the 15th counts toward next month;
+//       payment on or before the 15th counts toward current month.
+// Returns the 1st of the applicable rent month.
+function getRentMonth(paymentDate) {
+  const d = new Date(paymentDate);
+  if (d.getDate() > 15) {
+    // Next month's rent
+    return new Date(d.getFullYear(), d.getMonth() + 1, 1);
+  }
+  // Current month's rent
+  return new Date(d.getFullYear(), d.getMonth(), 1);
+}
+
 // Parse Interac e-Transfer email
 function parseInteracEmail(headers, bodyText) {
   const subject = headers.find(h => h.name.toLowerCase() === 'subject')?.value || '';
@@ -64,14 +96,32 @@ function parseInteracEmail(headers, bodyText) {
   let senderName = null;
   let amount = null;
 
-  // Try subject first
-  const subjectMatch = subject.match(/(.+?)\s+sent you\s+\$?([\d,]+\.?\d*)/i);
-  if (subjectMatch) {
-    senderName = subjectMatch[1].trim();
-    amount = parseFloat(subjectMatch[2].replace(/,/g, ''));
+  // Pattern: "You've received $755.00 from OUSMAN SONKO and it has been automatically deposited."
+  // Also handles quoted variants: "You've received '$755.00' from 'John Smith'"
+  const receivedMatch = subject.match(/You['']ve received\s+'?\$?([\d,]+\.?\d*)'?\s+from\s+'?(.+?)(?:'?\s+and\s+|$)/i);
+  if (receivedMatch) {
+    amount = parseFloat(receivedMatch[1].replace(/,/g, ''));
+    senderName = receivedMatch[2].replace(/'+$/, '').trim();
+  }
+
+  // Fallback: "John Smith sent you $1,500.00"
+  if (!amount) {
+    const sentMatch = subject.match(/(.+?)\s+sent you\s+\$?([\d,]+\.?\d*)/i);
+    if (sentMatch) {
+      senderName = sentMatch[1].trim();
+      amount = parseFloat(sentMatch[2].replace(/,/g, ''));
+    }
   }
 
   // Try body if subject didn't match
+  if (!amount && bodyText) {
+    const bodyReceivedMatch = bodyText.match(/received\s+'?\$?([\d,]+\.?\d*)'?\s+from\s+'?(.+?)(?:'?\s+and\s+|$)/im);
+    if (bodyReceivedMatch) {
+      amount = parseFloat(bodyReceivedMatch[1].replace(/,/g, ''));
+      senderName = bodyReceivedMatch[2].replace(/'+$/, '').trim();
+    }
+  }
+
   if (!amount && bodyText) {
     const bodyMatch = bodyText.match(/(.+?)\s+sent you\s+(?:a\s+)?(?:money\s+transfer\s+of\s+)?\$?([\d,]+\.?\d*)/i);
     if (bodyMatch) {
@@ -116,12 +166,29 @@ function parseUtilityEmail(headers, bodyText, parser) {
   };
 }
 
+// Alias map: Interac sender names that should map to a specific tenant.
+// Key = lowercase sender name, Value = tenant name in DB (lowercase).
+const SENDER_ALIASES = {
+  'savannah hummel': 'justin sox',
+  'godwin antepim': 'eunice frimpomaa',
+  'godwin kofi antepim': 'eunice frimpomaa',
+  'parveen simplii': 'parveen kumar',
+};
+
 // Match sender name to a tenant
 async function matchTenant(prisma, senderName) {
   if (!senderName) return { tenantId: null, confidence: 'none' };
 
-  const tenants = await prisma.tenant.findMany({ where: { isArchived: false } });
-  const normalized = senderName.toLowerCase().trim();
+  // Search all tenants (including archived) for historical matching
+  const tenants = await prisma.tenant.findMany();
+  let normalized = senderName.toLowerCase().trim();
+
+  // Check alias map first
+  const aliasTarget = SENDER_ALIASES[normalized];
+  if (aliasTarget) {
+    const aliased = tenants.find(t => t.name.toLowerCase().trim() === aliasTarget);
+    if (aliased) return { tenantId: aliased.id, confidence: 'high' };
+  }
 
   // Exact match
   const exact = tenants.find(t => t.name.toLowerCase().trim() === normalized);
@@ -132,7 +199,22 @@ async function matchTenant(prisma, senderName) {
     const tName = t.name.toLowerCase().trim();
     return normalized.includes(tName) || tName.includes(normalized);
   });
-  if (partial) return { tenantId: partial.id, confidence: 'medium' };
+  if (partial) return { tenantId: partial.id, confidence: 'high' };
+
+  // Word-based match: all words of tenant name appear in sender name
+  const wordMatch = tenants.find(t => {
+    const tWords = t.name.toLowerCase().trim().split(/\s+/);
+    return tWords.length >= 2 && tWords.every(w => normalized.includes(w));
+  });
+  if (wordMatch) return { tenantId: wordMatch.id, confidence: 'high' };
+
+  // Reverse word match: all words of sender appear in tenant name
+  const senderWords = normalized.split(/\s+/).filter(w => w.length > 1);
+  const reverseMatch = tenants.find(t => {
+    const tName = t.name.toLowerCase().trim();
+    return senderWords.length >= 2 && senderWords.every(w => tName.includes(w));
+  });
+  if (reverseMatch) return { tenantId: reverseMatch.id, confidence: 'medium' };
 
   return { tenantId: null, confidence: 'none' };
 }
@@ -201,7 +283,9 @@ function decodeBody(message) {
 }
 
 // Main scan function
-async function scanGmail(prisma) {
+// options.afterDate: scan emails after this date (e.g., '2025/10/25')
+// options.maxResults: max emails per query (default 50)
+async function scanGmail(prisma, options = {}) {
   const syncState = await prisma.gmailSyncState.findFirst();
   if (!syncState?.refreshToken) {
     throw new Error('Gmail not connected. Please authorize first.');
@@ -210,15 +294,49 @@ async function scanGmail(prisma) {
   const gmail = await getGmailClient(syncState.refreshToken);
   const results = { interac: 0, utility: 0, errors: [] };
 
-  // Scan for Interac e-Transfers
-  try {
-    const interacRes = await gmail.users.messages.list({
-      userId: 'me',
-      q: 'from:notify@payments.interac.ca newer_than:14d',
-      maxResults: 50,
-    });
+  // Gmail accepts after:YYYY/M/D — strip leading zeros to be safe
+  let afterClause = 'newer_than:14d';
+  if (options.afterDate) {
+    // Convert "2025/09/01" to epoch seconds for reliable filtering
+    const d = new Date(options.afterDate);
+    if (!isNaN(d.getTime())) {
+      afterClause = `after:${Math.floor(d.getTime() / 1000)}`;
+    } else {
+      afterClause = `after:${options.afterDate}`;
+    }
+  }
+  const maxResults = options.maxResults || 50;
 
-    const interacMessages = interacRes.data.messages || [];
+  // Scan for Interac e-Transfers (try multiple search queries)
+  const interacQueries = [
+    `from:notify@payments.interac.ca ${afterClause} in:anywhere`,
+    `subject:"INTERAC e-Transfer" "You've received" ${afterClause} in:anywhere`,
+  ];
+
+  try {
+    let allInteracMessages = [];
+    const seenIds = new Set();
+
+    for (const query of interacQueries) {
+      let pageToken = null;
+      do {
+        const interacRes = await gmail.users.messages.list({
+          userId: 'me',
+          q: query,
+          maxResults,
+          pageToken,
+        });
+        for (const msg of (interacRes.data.messages || [])) {
+          if (!seenIds.has(msg.id)) {
+            seenIds.add(msg.id);
+            allInteracMessages.push(msg);
+          }
+        }
+        pageToken = interacRes.data.nextPageToken;
+      } while (pageToken);
+    }
+
+    const interacMessages = allInteracMessages;
     for (const msg of interacMessages) {
       try {
         // Check if already processed
@@ -241,6 +359,9 @@ async function scanGmail(prisma) {
 
         const { tenantId, confidence } = await matchTenant(prisma, parsed.senderName);
 
+        const rentMonth = getRentMonth(parsed.date);
+        const rentMonthLabel = rentMonth.toLocaleString('en-US', { month: 'long', year: 'numeric' });
+
         await prisma.pendingTransaction.create({
           data: {
             type: 'payment',
@@ -252,7 +373,8 @@ async function scanGmail(prisma) {
             tenantId,
             matchConfidence: confidence,
             rawEmailSnippet: full.data.snippet?.substring(0, 500),
-            description: `Interac e-Transfer from ${parsed.senderName || 'Unknown'}`,
+            description: `Interac e-Transfer from ${parsed.senderName || 'Unknown'} (${rentMonthLabel} rent)`,
+            category: rentMonthLabel,
           },
         });
         results.interac++;
@@ -268,13 +390,30 @@ async function scanGmail(prisma) {
   for (const parser of UTILITY_PARSERS) {
     try {
       const fromAddr = parser.fromPattern.source.replace(/\\/g, '').replace(/\.com\/i$/, '.com');
-      const utilRes = await gmail.users.messages.list({
-        userId: 'me',
-        q: `from:${fromAddr} newer_than:30d`,
-        maxResults: 10,
-      });
+      const utilAfterClause = afterClause; // use same epoch-based clause as Interac
 
-      const utilMessages = utilRes.data.messages || [];
+      // Build query — add subject filter if parser has one
+      let query = `from:${fromAddr} ${utilAfterClause} in:anywhere`;
+      if (parser.subjectPattern) {
+        const subjectText = parser.subjectPattern.source.replace(/\\/g, '');
+        query = `subject:"${subjectText}" ${utilAfterClause} in:anywhere`;
+      }
+
+      let allUtilMessages = [];
+      let utilPageToken = null;
+
+      do {
+        const utilRes = await gmail.users.messages.list({
+          userId: 'me',
+          q: query,
+          maxResults,
+          pageToken: utilPageToken,
+        });
+        allUtilMessages = allUtilMessages.concat(utilRes.data.messages || []);
+        utilPageToken = utilRes.data.nextPageToken;
+      } while (utilPageToken);
+
+      const utilMessages = allUtilMessages;
       for (const msg of utilMessages) {
         try {
           const existing = await prisma.pendingTransaction.findUnique({
@@ -292,7 +431,19 @@ async function scanGmail(prisma) {
           const bodyText = decodeBody(full.data);
           const parsed = parseUtilityEmail(headers, bodyText, parser);
 
-          const propertyId = await mapUtilityToProperty(prisma, parser.propertyKey);
+          // Determine property: account-based (Shaw) or city-based
+          let propertyId = null;
+          if (parser.propertyKey === 'shaw_by_account' && parser.accountMap) {
+            for (const [acct, city] of Object.entries(parser.accountMap)) {
+              if (bodyText.includes(acct) || (full.data.snippet || '').includes(acct)) {
+                propertyId = await mapUtilityToProperty(prisma, city);
+                parsed.description = `${parser.name} bill (${city})`;
+                break;
+              }
+            }
+          } else {
+            propertyId = await mapUtilityToProperty(prisma, parser.propertyKey);
+          }
 
           await prisma.pendingTransaction.create({
             data: {
@@ -334,5 +485,6 @@ module.exports = {
   getAuthUrl,
   exchangeCode,
   scanGmail,
+  getRentMonth,
   UTILITY_PARSERS,
 };
