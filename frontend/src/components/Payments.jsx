@@ -3,11 +3,6 @@ import {
   Box,
   Button,
   Container,
-  Dialog,
-  DialogActions,
-  DialogContent,
-  DialogTitle,
-  TextField,
   Typography,
   MenuItem,
   IconButton,
@@ -26,6 +21,8 @@ import {
   Menu,
   ToggleButtonGroup,
   ToggleButton,
+  TablePagination,
+  TextField,
 } from '@mui/material';
 import EditIcon from '@mui/icons-material/Edit';
 import DeleteIcon from '@mui/icons-material/Delete';
@@ -37,6 +34,9 @@ import PendingIcon from '@mui/icons-material/Pending';
 import config from '../config';
 import jsPDF from 'jspdf';
 import 'jspdf-autotable';
+import PaymentModal from './payments/PaymentModal';
+import ConfirmDialog from './common/ConfirmDialog';
+import StatusChip from './common/StatusChip';
 
 const Payments = () => {
   const [payments, setPayments] = useState([]);
@@ -63,6 +63,10 @@ const Payments = () => {
   const [customEndDate, setCustomEndDate] = useState('');
   const [exportMenuAnchor, setExportMenuAnchor] = useState(null);
 
+  // Pagination state
+  const [page, setPage] = useState(0);
+  const [rowsPerPage, setRowsPerPage] = useState(25);
+
   useEffect(() => {
     fetchPayments();
     fetchTenants();
@@ -86,24 +90,24 @@ const Payments = () => {
         fetch(`${config.apiUrl}/api/tenants`),
         fetch(`${config.apiUrl}/api/tenants?includeArchived=true`)
       ]);
-      
+
       if (!currentResponse.ok || !archivedResponse.ok) {
         throw new Error('Failed to fetch tenants');
       }
-      
+
       const currentTenants = await currentResponse.json();
       const archivedTenants = await archivedResponse.json();
-      
+
       // Combine and deduplicate tenants
       const allTenants = [...currentTenants];
-      
+
       // Add archived tenants that aren't already in the current list
       archivedTenants.forEach(archivedTenant => {
         if (!allTenants.find(tenant => tenant.id === archivedTenant.id)) {
           allTenants.push(archivedTenant);
         }
       });
-      
+
       setTenants(allTenants);
     } catch (error) {
       console.error('Error fetching tenants:', error);
@@ -194,16 +198,25 @@ const Payments = () => {
     setSelectedMonth(event.target.value);
   };
 
+  const handleChangePage = (event, newPage) => {
+    setPage(newPage);
+  };
+
+  const handleChangeRowsPerPage = (event) => {
+    setRowsPerPage(parseInt(event.target.value, 10));
+    setPage(0);
+  };
+
   // Helper function to calculate days overdue
   const calculateDaysOverdue = (paymentDate) => {
     const dueDate = new Date(paymentDate);
     dueDate.setDate(1); // Due on 1st of month
     const gracePeriodEnd = new Date(dueDate);
     gracePeriodEnd.setDate(gracePeriodEnd.getDate() + 3); // 3 days grace period
-    
+
     const today = new Date();
     today.setHours(0, 0, 0, 0);
-    
+
     if (today > gracePeriodEnd) {
       const diffTime = Math.abs(today - gracePeriodEnd);
       const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
@@ -217,13 +230,13 @@ const Payments = () => {
     if (payment.status === 'completed' || payment.status === 'partial') {
       return payment.status;
     }
-    
+
     // Check if pending payment is now late
     const daysOverdue = calculateDaysOverdue(payment.date);
     if (daysOverdue > 0 && payment.status === 'pending') {
       return 'late';
     }
-    
+
     return payment.status;
   };
 
@@ -231,7 +244,7 @@ const Payments = () => {
   const getDateRangeValues = () => {
     const now = new Date();
     now.setHours(23, 59, 59, 999);
-    
+
     switch (dateRange) {
       case 'thisWeek': {
         const startOfWeek = new Date(now);
@@ -272,42 +285,42 @@ const Payments = () => {
     const now = new Date();
     const currentMonth = now.getMonth();
     const currentYear = now.getFullYear();
-    
+
     // Filter payments by current month
     const thisMonthPayments = payments.filter(payment => {
       const paymentDate = new Date(payment.date);
-      return paymentDate.getMonth() === currentMonth && 
+      return paymentDate.getMonth() === currentMonth &&
              paymentDate.getFullYear() === currentYear &&
              (payment.status === 'completed' || payment.status === 'partial');
     });
-    
+
     // Filter payments by current year
     const thisYearPayments = payments.filter(payment => {
       const paymentDate = new Date(payment.date);
       return paymentDate.getFullYear() === currentYear &&
              (payment.status === 'completed' || payment.status === 'partial');
     });
-    
+
     // Calculate totals
     const totalThisMonth = thisMonthPayments.reduce((sum, p) => sum + p.amount, 0);
     const totalThisYear = thisYearPayments.reduce((sum, p) => sum + p.amount, 0);
-    
+
     // Calculate expected for this month (active tenants only)
     const activeTenants = tenants.filter(t => !t.isArchived);
     const expectedThisMonth = activeTenants.reduce((sum, t) => sum + t.rentAmount, 0);
-    
+
     // Calculate collection rate
-    const collectionRate = expectedThisMonth > 0 
-      ? (totalThisMonth / expectedThisMonth) * 100 
+    const collectionRate = expectedThisMonth > 0
+      ? (totalThisMonth / expectedThisMonth) * 100
       : 0;
-    
+
     // Count late and pending payments
     const latePayments = payments.filter(p => getPaymentStatus(p) === 'late');
     const pendingPayments = payments.filter(p => p.status === 'pending' && getPaymentStatus(p) === 'pending');
-    
+
     const totalLateAmount = latePayments.reduce((sum, p) => sum + p.amount, 0);
     const totalPendingAmount = pendingPayments.reduce((sum, p) => sum + p.amount, 0);
-    
+
     return {
       totalThisMonth,
       totalThisYear,
@@ -365,26 +378,26 @@ const Payments = () => {
 
   const getMissingPayments = () => {
     if (!selectedMonth) return [];
-    
+
     const [month, year] = selectedMonth.split('-');
     const monthIndex = parseInt(month) - 1;
     const yearNum = parseInt(year);
-    
+
     // Get all active tenants (not archived)
     const activeTenants = tenants.filter(tenant => !tenant.isArchived);
-    
+
     // Get payments for the selected month
     const monthPayments = payments.filter(payment => {
       const paymentDate = new Date(payment.date);
       return paymentDate.getUTCMonth() === monthIndex && paymentDate.getUTCFullYear() === yearNum;
     });
-    
+
     // Find tenants who didn't pay in the selected month
     const tenantsWithPayments = monthPayments.map(payment => payment.tenantId);
-    const tenantsWithoutPayments = activeTenants.filter(tenant => 
+    const tenantsWithoutPayments = activeTenants.filter(tenant =>
       !tenantsWithPayments.includes(tenant.id)
     );
-    
+
     return tenantsWithoutPayments.map(tenant => ({
       tenantId: tenant.id,
       tenantName: tenant.name,
@@ -401,7 +414,7 @@ const Payments = () => {
   const exportToCSV = () => {
     const filtered = getFilteredPayments();
     const stats = calculateSummaryStats();
-    
+
     let csvContent = "Wagh Rental Properties - Payment Report\n";
     csvContent += `Generated: ${new Date().toLocaleDateString()}\n\n`;
     csvContent += "Summary Statistics\n";
@@ -411,15 +424,15 @@ const Payments = () => {
     csvContent += `Collection Rate,${stats.collectionRate.toFixed(1)}%\n`;
     csvContent += `Late Payments,${stats.lateCount} ($${stats.lateAmount.toFixed(2)})\n`;
     csvContent += `Pending Payments,${stats.pendingCount} ($${stats.pendingAmount.toFixed(2)})\n\n`;
-    
+
     csvContent += "Date,Tenant,Property,Amount,Status,Days Overdue,Notes\n";
-    
+
     filtered.forEach(payment => {
       const tenant = tenants.find(t => t.id === payment.tenantId);
       const property = properties.find(p => p.id === tenant?.propertyId);
       const status = getPaymentStatus(payment);
       const daysOverdue = status === 'late' ? calculateDaysOverdue(payment.date) : 0;
-      
+
       const row = [
         new Date(payment.date).toLocaleDateString('en-US', { timeZone: 'UTC' }),
         tenant?.name || 'Unknown',
@@ -429,10 +442,10 @@ const Payments = () => {
         daysOverdue > 0 ? daysOverdue : '',
         `"${(payment.notes || '').replace(/"/g, '""')}"`
       ].join(',');
-      
+
       csvContent += row + '\n';
     });
-    
+
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
     const link = document.createElement('a');
     const url = URL.createObjectURL(blob);
@@ -449,9 +462,9 @@ const Payments = () => {
   const exportToPDF = () => {
     const filtered = getFilteredPayments();
     const stats = calculateSummaryStats();
-    
+
     const doc = new jsPDF();
-    
+
     // Header
     doc.setFontSize(18);
     doc.text('Wagh Rental Properties', 14, 20);
@@ -459,12 +472,12 @@ const Payments = () => {
     doc.text('Payment Report', 14, 28);
     doc.setFontSize(10);
     doc.text(`Generated: ${new Date().toLocaleDateString()}`, 14, 35);
-    
+
     // Summary Statistics
     doc.setFontSize(12);
     doc.text('Summary Statistics', 14, 45);
     doc.setFontSize(10);
-    
+
     const summaryData = [
       ['Total This Month', `$${stats.totalThisMonth.toFixed(2)}`],
       ['Total This Year', `$${stats.totalThisYear.toFixed(2)}`],
@@ -473,7 +486,7 @@ const Payments = () => {
       ['Late Payments', `${stats.lateCount} ($${stats.lateAmount.toFixed(2)})`],
       ['Pending Payments', `${stats.pendingCount} ($${stats.pendingAmount.toFixed(2)})`],
     ];
-    
+
     doc.autoTable({
       startY: 50,
       head: [],
@@ -485,14 +498,14 @@ const Payments = () => {
         1: { cellWidth: 50 }
       }
     });
-    
+
     // Payment Details Table
     const tableData = filtered.map(payment => {
       const tenant = tenants.find(t => t.id === payment.tenantId);
       const property = properties.find(p => p.id === tenant?.propertyId);
       const status = getPaymentStatus(payment);
       const daysOverdue = status === 'late' ? calculateDaysOverdue(payment.date) : 0;
-      
+
       return [
         new Date(payment.date).toLocaleDateString('en-US', { timeZone: 'UTC', month: 'short', day: 'numeric', year: 'numeric' }),
         tenant?.name || 'Unknown',
@@ -502,7 +515,7 @@ const Payments = () => {
         daysOverdue > 0 ? `${daysOverdue}d` : '',
       ];
     });
-    
+
     doc.autoTable({
       startY: doc.lastAutoTable.finalY + 10,
       head: [['Date', 'Tenant', 'Property', 'Amount', 'Status', 'Overdue']],
@@ -515,7 +528,7 @@ const Payments = () => {
         5: { halign: 'center' }
       }
     });
-    
+
     doc.save(`payments_report_${new Date().toISOString().split('T')[0]}.pdf`);
     setExportMenuAnchor(null);
   };
@@ -536,9 +549,9 @@ const Payments = () => {
         },
         body: JSON.stringify(paymentData),
       });
-      
+
       const data = await response.json();
-      
+
       if (!response.ok) {
         throw new Error(data.error || 'Failed to create payment');
       }
@@ -602,7 +615,9 @@ const Payments = () => {
   };
 
   const stats = calculateSummaryStats();
-  
+  const filteredPayments = getFilteredPayments();
+  const paginatedPayments = filteredPayments.slice(page * rowsPerPage, page * rowsPerPage + rowsPerPage);
+
   return (
     <Container maxWidth="lg">
       <Box sx={{ my: 4 }}>
@@ -675,9 +690,9 @@ const Payments = () => {
               <Typography component="h2" variant="h6" color="primary" gutterBottom>
                 Collection Rate
               </Typography>
-              <Typography 
-                component="p" 
-                variant="h4" 
+              <Typography
+                component="p"
+                variant="h4"
                 color={stats.collectionRate >= 90 ? 'success.main' : stats.collectionRate >= 70 ? 'warning.main' : 'error'}
               >
                 {stats.collectionRate.toFixed(1)}%
@@ -735,7 +750,7 @@ const Payments = () => {
                 <ToggleButton value="custom">Custom Range</ToggleButton>
               </ToggleButtonGroup>
             </Grid>
-            
+
             {dateRange === 'custom' && (
               <>
                 <Grid item xs={12} md={6}>
@@ -762,7 +777,7 @@ const Payments = () => {
                 </Grid>
               </>
             )}
-            
+
             <Grid item xs={12} md={3}>
               <FormControl fullWidth>
                 <InputLabel id="property-filter-label">Filter by Property</InputLabel>
@@ -825,7 +840,7 @@ const Payments = () => {
                   </>
                 ) : (
                   <>
-                    Showing {getFilteredPayments().length} of {payments.length} payments
+                    Showing {filteredPayments.length} of {payments.length} payments
                     {missingTenantsCount > 0 && (
                       <span style={{ color: '#f57c00' }}>
                         {' '}({missingTenantsCount} with missing tenant data)
@@ -906,12 +921,12 @@ const Payments = () => {
                   </TableRow>
                 ))
               ) : (
-                getFilteredPayments().map((payment) => {
+                paginatedPayments.map((payment) => {
                   const tenant = tenants.find(t => t.id === payment.tenantId);
                   const property = properties.find(p => p.id === tenant?.propertyId);
                   const actualStatus = getPaymentStatus(payment);
                   const daysOverdue = actualStatus === 'late' ? calculateDaysOverdue(payment.date) : 0;
-                  
+
                   // Debug logging for missing tenants
                   if (!tenant) {
                     console.warn(`Payment ${payment.id} references non-existent tenant ${payment.tenantId}`);
@@ -974,7 +989,7 @@ const Payments = () => {
                         );
                     }
                   };
-                  
+
                   return (
                     <TableRow key={payment.id} sx={getRowStyle()}>
                       <TableCell>
@@ -1014,184 +1029,58 @@ const Payments = () => {
               )}
             </TableBody>
           </Table>
+          {!showMissingPayments && (
+            <TablePagination
+              component="div"
+              count={filteredPayments.length}
+              page={page}
+              onPageChange={handleChangePage}
+              rowsPerPage={rowsPerPage}
+              onRowsPerPageChange={handleChangeRowsPerPage}
+              rowsPerPageOptions={[10, 25, 50, 100]}
+            />
+          )}
         </TableContainer>
 
         {/* Add Payment Dialog */}
-        <Dialog open={open} onClose={handleClose}>
-          <DialogTitle>Add New Payment</DialogTitle>
-          <DialogContent>
-            <Box component="form" onSubmit={handleSubmit} sx={{ mt: 2 }}>
-              <TextField
-                fullWidth
-                select
-                label="Tenant"
-                name="tenantId"
-                value={newPayment.tenantId}
-                onChange={handleChange}
-                margin="normal"
-                required
-              >
-                {tenants.map((tenant) => (
-                  <MenuItem key={tenant.id} value={tenant.id}>
-                    {tenant.name}
-                  </MenuItem>
-                ))}
-              </TextField>
-              <TextField
-                fullWidth
-                label="Amount"
-                name="amount"
-                type="number"
-                value={newPayment.amount}
-                onChange={handleChange}
-                margin="normal"
-                required
-              />
-              <TextField
-                fullWidth
-                label="Date"
-                name="date"
-                type="date"
-                value={newPayment.date}
-                onChange={handleChange}
-                margin="normal"
-                required
-                InputLabelProps={{
-                  shrink: true,
-                }}
-              />
-              <TextField
-                fullWidth
-                select
-                label="Status"
-                name="status"
-                value={newPayment.status}
-                onChange={handleChange}
-                margin="normal"
-                required
-              >
-                <MenuItem value="completed">Completed</MenuItem>
-                <MenuItem value="pending">Pending</MenuItem>
-                <MenuItem value="late">Late</MenuItem>
-                <MenuItem value="partial">Partial</MenuItem>
-              </TextField>
-              <TextField
-                fullWidth
-                label="Notes"
-                name="notes"
-                value={newPayment.notes}
-                onChange={handleChange}
-                margin="normal"
-                multiline
-                rows={3}
-              />
-            </Box>
-          </DialogContent>
-          <DialogActions>
-            <Button onClick={handleClose}>Cancel</Button>
-            <Button onClick={handleSubmit} variant="contained" color="primary">
-              Add Payment
-            </Button>
-          </DialogActions>
-        </Dialog>
+        <PaymentModal
+          open={open}
+          onClose={handleClose}
+          onSubmit={handleSubmit}
+          title="Add New Payment"
+          submitText="Add Payment"
+          formId="add-payment-form"
+          newPayment={newPayment}
+          handleChange={handleChange}
+          tenants={tenants}
+        />
 
         {/* Edit Payment Dialog */}
-        <Dialog open={editOpen} onClose={handleEditClose}>
-          <DialogTitle>Edit Payment</DialogTitle>
-          <DialogContent>
-            <Box component="form" id="edit-payment-form" onSubmit={handleEdit} sx={{ mt: 2 }}>
-              <TextField
-                fullWidth
-                select
-                label="Tenant"
-                name="tenantId"
-                value={newPayment.tenantId}
-                onChange={handleChange}
-                margin="normal"
-                required
-              >
-                {tenants.map((tenant) => (
-                  <MenuItem key={tenant.id} value={tenant.id}>
-                    {tenant.name}
-                  </MenuItem>
-                ))}
-              </TextField>
-              <TextField
-                fullWidth
-                label="Amount"
-                name="amount"
-                type="number"
-                value={newPayment.amount}
-                onChange={handleChange}
-                margin="normal"
-                required
-              />
-              <TextField
-                fullWidth
-                label="Date"
-                name="date"
-                type="date"
-                value={newPayment.date}
-                onChange={handleChange}
-                margin="normal"
-                required
-                InputLabelProps={{
-                  shrink: true,
-                }}
-              />
-              <TextField
-                fullWidth
-                select
-                label="Status"
-                name="status"
-                value={newPayment.status}
-                onChange={handleChange}
-                margin="normal"
-                required
-              >
-                <MenuItem value="completed">Completed</MenuItem>
-                <MenuItem value="pending">Pending</MenuItem>
-                <MenuItem value="late">Late</MenuItem>
-                <MenuItem value="partial">Partial</MenuItem>
-              </TextField>
-              <TextField
-                fullWidth
-                label="Notes"
-                name="notes"
-                value={newPayment.notes}
-                onChange={handleChange}
-                margin="normal"
-                multiline
-                rows={3}
-              />
-            </Box>
-          </DialogContent>
-          <DialogActions>
-            <Button onClick={handleEditClose}>Cancel</Button>
-            <Button type="submit" variant="contained" color="primary" form="edit-payment-form">
-              Save Changes
-            </Button>
-          </DialogActions>
-        </Dialog>
+        <PaymentModal
+          open={editOpen}
+          onClose={handleEditClose}
+          onSubmit={handleEdit}
+          title="Edit Payment"
+          submitText="Save Changes"
+          formId="edit-payment-form"
+          newPayment={newPayment}
+          handleChange={handleChange}
+          tenants={tenants}
+        />
 
         {/* Delete Confirmation Dialog */}
-        <Dialog open={deleteOpen} onClose={handleDeleteClose}>
-          <DialogTitle>Delete Payment</DialogTitle>
-          <DialogContent>
-            <Typography>
-              Are you sure you want to delete this payment? This action cannot be undone.
-            </Typography>
-          </DialogContent>
-          <DialogActions>
-            <Button onClick={handleDeleteClose}>Cancel</Button>
-            <Button onClick={handleDelete} variant="contained" color="error">
-              Delete
-            </Button>
-          </DialogActions>
-        </Dialog>
+        <ConfirmDialog
+          open={deleteOpen}
+          title="Delete Payment"
+          message="Are you sure you want to delete this payment? This action cannot be undone."
+          onConfirm={handleDelete}
+          onCancel={handleDeleteClose}
+          confirmText="Delete"
+          confirmColor="error"
+        />
       </Box>
     </Container>
   );
 };
 
-export default Payments; 
+export default Payments;

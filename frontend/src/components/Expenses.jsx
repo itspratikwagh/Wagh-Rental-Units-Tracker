@@ -5,10 +5,6 @@ import {
   Box,
   Button,
   Container,
-  Dialog,
-  DialogActions,
-  DialogContent,
-  DialogTitle,
   TextField,
   Typography,
   MenuItem,
@@ -32,6 +28,7 @@ import {
   Menu,
   ToggleButtonGroup,
   ToggleButton,
+  TablePagination,
 } from '@mui/material';
 import EditIcon from '@mui/icons-material/Edit';
 import DeleteIcon from '@mui/icons-material/Delete';
@@ -44,6 +41,8 @@ import DownloadIcon from '@mui/icons-material/Download';
 import CalendarTodayIcon from '@mui/icons-material/CalendarToday';
 import DateRangeIcon from '@mui/icons-material/DateRange';
 import config from '../config';
+import ExpenseModal from './expenses/ExpenseModal';
+import ConfirmDialog from './common/ConfirmDialog';
 
 const EXPENSE_CATEGORIES = [
   'Mortgage',
@@ -78,6 +77,10 @@ const Expenses = () => {
     description: '',
     propertyId: '',
   });
+
+  // Pagination state
+  const [page, setPage] = useState(0);
+  const [rowsPerPage, setRowsPerPage] = useState(25);
 
   useEffect(() => {
     fetchExpenses();
@@ -173,6 +176,15 @@ const Expenses = () => {
     }
   };
 
+  const handleChangePage = (event, newPage) => {
+    setPage(newPage);
+  };
+
+  const handleChangeRowsPerPage = (event) => {
+    setRowsPerPage(parseInt(event.target.value, 10));
+    setPage(0);
+  };
+
   const getDateRangeValues = () => {
     const now = new Date();
     let startDate, endDate;
@@ -220,7 +232,7 @@ const Expenses = () => {
 
     // Filter by search term (description)
     if (searchTerm.trim() !== '') {
-      filtered = filtered.filter(expense => 
+      filtered = filtered.filter(expense =>
         expense.description?.toLowerCase().includes(searchTerm.toLowerCase()) ||
         expense.category.toLowerCase().includes(searchTerm.toLowerCase())
       );
@@ -242,22 +254,22 @@ const Expenses = () => {
   const getExpenseStatistics = () => {
     const filteredExpenses = getFilteredExpenses();
     const allExpenses = [...expenses];
-    
+
     const now = new Date();
     const thisMonth = allExpenses.filter(expense => {
       const expenseDate = new Date(expense.date);
       return expenseDate.getMonth() === now.getMonth() && expenseDate.getFullYear() === now.getFullYear();
     });
-    
+
     const thisYear = allExpenses.filter(expense => {
       const expenseDate = new Date(expense.date);
       return expenseDate.getFullYear() === now.getFullYear();
     });
-    
+
     const totalAmount = filteredExpenses.reduce((sum, expense) => sum + parseFloat(expense.amount), 0);
     const thisMonthAmount = thisMonth.reduce((sum, expense) => sum + parseFloat(expense.amount), 0);
     const thisYearAmount = thisYear.reduce((sum, expense) => sum + parseFloat(expense.amount), 0);
-    
+
     // Category breakdown
     const categoryBreakdown = {};
     filteredExpenses.forEach(expense => {
@@ -286,22 +298,22 @@ const Expenses = () => {
   const exportToCSV = () => {
     const filteredExpenses = getFilteredExpenses();
     const stats = getExpenseStatistics();
-    
+
     let csvContent = "Wagh Rental Properties - Expense Report\n";
     csvContent += `Generated on: ${new Date().toLocaleDateString()}\n`;
     csvContent += `Total Expenses: $${stats.totalAmount.toFixed(2)} (${stats.totalCount} items)\n`;
     csvContent += `This Month: $${stats.thisMonthAmount.toFixed(2)} (${stats.thisMonthCount} items)\n`;
     csvContent += `This Year: $${stats.thisYearAmount.toFixed(2)} (${stats.thisYearCount} items)\n\n`;
-    
+
     csvContent += "Date,Property,Category,Amount,Description\n";
-    
+
     filteredExpenses.forEach(expense => {
       const propertyName = properties.find(p => p.id === expense.propertyId)?.name || 'Unknown';
       const date = new Date(expense.date).toLocaleDateString();
       const description = (expense.description || '').replace(/"/g, '""'); // Escape quotes
       csvContent += `"${date}","${propertyName}","${expense.category}","$${expense.amount}","${description}"\n`;
     });
-    
+
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
     const link = document.createElement('a');
     const url = URL.createObjectURL(blob);
@@ -311,16 +323,16 @@ const Expenses = () => {
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
-    
+
     setExportMenuAnchor(null);
   };
-  
+
   const exportToPDF = () => {
     const filteredExpenses = getFilteredExpenses();
     const stats = getExpenseStatistics();
-    
+
     const doc = new jsPDF();
-    
+
     // Header
     doc.setFontSize(18);
     doc.text('Wagh Rental Properties', 20, 20);
@@ -328,7 +340,7 @@ const Expenses = () => {
     doc.text('Expense Report', 20, 30);
     doc.setFontSize(10);
     doc.text(`Generated on: ${new Date().toLocaleDateString()}`, 20, 40);
-    
+
     // Summary Stats
     doc.setFontSize(12);
     doc.text('Summary:', 20, 55);
@@ -336,7 +348,7 @@ const Expenses = () => {
     doc.text(`Total Expenses: $${stats.totalAmount.toFixed(2)} (${stats.totalCount} items)`, 20, 65);
     doc.text(`This Month: $${stats.thisMonthAmount.toFixed(2)} (${stats.thisMonthCount} items)`, 20, 75);
     doc.text(`This Year: $${stats.thisYearAmount.toFixed(2)} (${stats.thisYearCount} items)`, 20, 85);
-    
+
     // Table
     const tableData = filteredExpenses.map(expense => [
       new Date(expense.date).toLocaleDateString(),
@@ -345,7 +357,7 @@ const Expenses = () => {
       `$${expense.amount}`,
       (expense.description || '').substring(0, 50) + (expense.description?.length > 50 ? '...' : '')
     ]);
-    
+
     doc.autoTable({
       head: [['Date', 'Property', 'Category', 'Amount', 'Description']],
       body: tableData,
@@ -353,7 +365,7 @@ const Expenses = () => {
       styles: { fontSize: 8 },
       headStyles: { fillColor: [41, 128, 185] },
     });
-    
+
     doc.save(`expense-report-${new Date().toISOString().split('T')[0]}.pdf`);
     setExportMenuAnchor(null);
   };
@@ -377,9 +389,9 @@ const Expenses = () => {
         },
         body: JSON.stringify(newExpense),
       });
-      
+
       const data = await response.json();
-      
+
       if (!response.ok) {
         throw new Error(data.error || 'Failed to create expense');
       }
@@ -403,9 +415,9 @@ const Expenses = () => {
         },
         body: JSON.stringify(newExpense),
       });
-      
+
       const data = await response.json();
-      
+
       if (!response.ok) {
         throw new Error(data.error || 'Failed to update expense');
       }
@@ -424,7 +436,7 @@ const Expenses = () => {
       const response = await fetch(`${config.apiUrl}/api/expenses/${selectedExpense.id}`, {
         method: 'DELETE',
       });
-      
+
       if (!response.ok) {
         const data = await response.json();
         throw new Error(data.error || 'Failed to delete expense');
@@ -438,6 +450,9 @@ const Expenses = () => {
     }
   };
 
+  const filteredExpenses = getFilteredExpenses();
+  const paginatedExpenses = filteredExpenses.slice(page * rowsPerPage, page * rowsPerPage + rowsPerPage);
+
   return (
     <Container maxWidth="lg">
       <Box sx={{ my: 4 }}>
@@ -446,9 +461,9 @@ const Expenses = () => {
             Expenses
           </Typography>
           <Stack direction="row" spacing={2}>
-            <Button 
-              variant="outlined" 
-              startIcon={<DownloadIcon />} 
+            <Button
+              variant="outlined"
+              startIcon={<DownloadIcon />}
               onClick={(e) => setExportMenuAnchor(e.currentTarget)}
             >
               Export
@@ -590,7 +605,7 @@ const Expenses = () => {
               Custom
             </ToggleButton>
           </ToggleButtonGroup>
-          
+
           {dateRange === 'custom' && (
             <Box sx={{ display: 'flex', gap: 2, mt: 2 }}>
               <TextField
@@ -665,7 +680,7 @@ const Expenses = () => {
             </Grid>
             <Grid item xs={12} sm={6} md={3}>
               <Typography variant="body2" color="text.secondary">
-                Showing {getFilteredExpenses().length} of {expenses.length} expenses
+                Showing {filteredExpenses.length} of {expenses.length} expenses
               </Typography>
             </Grid>
           </Grid>
@@ -684,7 +699,7 @@ const Expenses = () => {
               </TableRow>
             </TableHead>
             <TableBody>
-              {getFilteredExpenses().map((expense) => (
+              {paginatedExpenses.map((expense) => (
                 <TableRow key={expense.id}>
                   <TableCell>
                     {new Date(expense.date).toLocaleDateString('en-US', {
@@ -717,182 +732,51 @@ const Expenses = () => {
               ))}
             </TableBody>
           </Table>
+          <TablePagination
+            component="div"
+            count={filteredExpenses.length}
+            page={page}
+            onPageChange={handleChangePage}
+            rowsPerPage={rowsPerPage}
+            onRowsPerPageChange={handleChangeRowsPerPage}
+            rowsPerPageOptions={[10, 25, 50, 100]}
+          />
         </TableContainer>
 
-        <Dialog open={open} onClose={handleClose}>
-          <DialogTitle>Add New Expense</DialogTitle>
-          <DialogContent>
-            <Box component="form" onSubmit={handleSubmit} sx={{ mt: 2 }}>
-              <TextField
-                fullWidth
-                label="Amount"
-                name="amount"
-                type="number"
-                value={newExpense.amount}
-                onChange={handleChange}
-                margin="normal"
-                required
-              />
-              <TextField
-                fullWidth
-                label="Date"
-                name="date"
-                type="date"
-                value={newExpense.date}
-                onChange={handleChange}
-                margin="normal"
-                required
-                InputLabelProps={{
-                  shrink: true,
-                }}
-              />
-              <TextField
-                fullWidth
-                select
-                label="Category"
-                name="category"
-                value={newExpense.category}
-                onChange={handleChange}
-                margin="normal"
-                required
-              >
-                {EXPENSE_CATEGORIES.map((category) => (
-                  <MenuItem key={category} value={category}>
-                    {category}
-                  </MenuItem>
-                ))}
-              </TextField>
-              <TextField
-                fullWidth
-                label="Description"
-                name="description"
-                value={newExpense.description}
-                onChange={handleChange}
-                margin="normal"
-                multiline
-                rows={3}
-                required
-              />
-              <TextField
-                fullWidth
-                select
-                label="Property"
-                name="propertyId"
-                value={newExpense.propertyId}
-                onChange={handleChange}
-                margin="normal"
-                required
-              >
-                {properties.map((property) => (
-                  <MenuItem key={property.id} value={property.id}>
-                    {property.name}
-                  </MenuItem>
-                ))}
-              </TextField>
-            </Box>
-          </DialogContent>
-          <DialogActions>
-            <Button onClick={handleClose}>Cancel</Button>
-            <Button onClick={handleSubmit} variant="contained" color="primary">
-              Add Expense
-            </Button>
-          </DialogActions>
-        </Dialog>
+        {/* Add Expense Dialog */}
+        <ExpenseModal
+          open={open}
+          onClose={handleClose}
+          onSubmit={handleSubmit}
+          title="Add New Expense"
+          submitText="Add Expense"
+          newExpense={newExpense}
+          handleChange={handleChange}
+          properties={properties}
+        />
 
-        <Dialog open={editOpen} onClose={handleEditClose}>
-          <DialogTitle>Edit Expense</DialogTitle>
-          <DialogContent>
-            <Box component="form" onSubmit={handleEdit} sx={{ mt: 2 }}>
-              <TextField
-                fullWidth
-                label="Amount"
-                name="amount"
-                type="number"
-                value={newExpense.amount}
-                onChange={handleChange}
-                margin="normal"
-                required
-              />
-              <TextField
-                fullWidth
-                label="Date"
-                name="date"
-                type="date"
-                value={newExpense.date}
-                onChange={handleChange}
-                margin="normal"
-                required
-                InputLabelProps={{
-                  shrink: true,
-                }}
-              />
-              <TextField
-                fullWidth
-                select
-                label="Category"
-                name="category"
-                value={newExpense.category}
-                onChange={handleChange}
-                margin="normal"
-                required
-              >
-                {EXPENSE_CATEGORIES.map((category) => (
-                  <MenuItem key={category} value={category}>
-                    {category}
-                  </MenuItem>
-                ))}
-              </TextField>
-              <TextField
-                fullWidth
-                label="Description"
-                name="description"
-                value={newExpense.description}
-                onChange={handleChange}
-                margin="normal"
-                multiline
-                rows={3}
-                required
-              />
-              <TextField
-                fullWidth
-                select
-                label="Property"
-                name="propertyId"
-                value={newExpense.propertyId}
-                onChange={handleChange}
-                margin="normal"
-                required
-              >
-                {properties.map((property) => (
-                  <MenuItem key={property.id} value={property.id}>
-                    {property.name}
-                  </MenuItem>
-                ))}
-              </TextField>
-            </Box>
-          </DialogContent>
-          <DialogActions>
-            <Button onClick={handleEditClose}>Cancel</Button>
-            <Button onClick={handleEdit} variant="contained" color="primary">
-              Save Changes
-            </Button>
-          </DialogActions>
-        </Dialog>
+        {/* Edit Expense Dialog */}
+        <ExpenseModal
+          open={editOpen}
+          onClose={handleEditClose}
+          onSubmit={handleEdit}
+          title="Edit Expense"
+          submitText="Save Changes"
+          newExpense={newExpense}
+          handleChange={handleChange}
+          properties={properties}
+        />
 
-        <Dialog open={deleteOpen} onClose={handleDeleteClose}>
-          <DialogTitle>Delete Expense</DialogTitle>
-          <DialogContent>
-            <Typography>
-              Are you sure you want to delete this expense? This action cannot be undone.
-            </Typography>
-          </DialogContent>
-          <DialogActions>
-            <Button onClick={handleDeleteClose}>Cancel</Button>
-            <Button onClick={handleDelete} variant="contained" color="error">
-              Delete
-            </Button>
-          </DialogActions>
-        </Dialog>
+        {/* Delete Confirmation Dialog */}
+        <ConfirmDialog
+          open={deleteOpen}
+          title="Delete Expense"
+          message="Are you sure you want to delete this expense? This action cannot be undone."
+          onConfirm={handleDelete}
+          onCancel={handleDeleteClose}
+          confirmText="Delete"
+          confirmColor="error"
+        />
 
         {/* Export Menu */}
         <Menu
@@ -908,4 +792,4 @@ const Expenses = () => {
   );
 };
 
-export default Expenses; 
+export default Expenses;

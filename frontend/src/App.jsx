@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { BrowserRouter as Router, Routes, Route, Link as RouterLink } from 'react-router-dom';
 import { ThemeProvider, createTheme } from '@mui/material/styles';
 import CssBaseline from '@mui/material/CssBaseline';
@@ -9,6 +10,14 @@ import Container from '@mui/material/Container';
 import Grid from '@mui/material/Grid';
 import Paper from '@mui/material/Paper';
 import Link from '@mui/material/Link';
+import IconButton from '@mui/material/IconButton';
+import Drawer from '@mui/material/Drawer';
+import List from '@mui/material/List';
+import ListItem from '@mui/material/ListItem';
+import ListItemButton from '@mui/material/ListItemButton';
+import ListItemText from '@mui/material/ListItemText';
+import useMediaQuery from '@mui/material/useMediaQuery';
+import MenuIcon from '@mui/icons-material/Menu';
 import Dashboard from './components/Dashboard';
 import Properties from './components/Properties';
 import Tenants from './components/Tenants';
@@ -29,6 +38,16 @@ const theme = createTheme({
   },
 });
 
+const navLinks = [
+  { label: 'Dashboard', to: '/' },
+  { label: 'Properties', to: '/properties' },
+  { label: 'Tenants', to: '/tenants' },
+  { label: 'Payments', to: '/payments' },
+  { label: 'Expenses', to: '/expenses' },
+  { label: 'Inbox', to: '/inbox' },
+  { label: 'Chat', to: '/chat' },
+];
+
 function Copyright(props) {
   return (
     <Typography variant="body2" color="text.secondary" align="center" {...props}>
@@ -43,6 +62,13 @@ function Copyright(props) {
 }
 
 function App() {
+  const isMobile = useMediaQuery(theme.breakpoints.down('md'));
+  const [drawerOpen, setDrawerOpen] = useState(false);
+
+  const toggleDrawer = (open) => () => {
+    setDrawerOpen(open);
+  };
+
   return (
     <ThemeProvider theme={theme}>
       <CssBaseline />
@@ -50,20 +76,55 @@ function App() {
         <Box sx={{ display: 'flex', flexDirection: 'column', minHeight: '100vh' }}>
           <AppBar position="static">
             <Toolbar>
+              {isMobile && (
+                <IconButton
+                  color="inherit"
+                  edge="start"
+                  onClick={toggleDrawer(true)}
+                  sx={{ mr: 2 }}
+                  aria-label="open navigation menu"
+                >
+                  <MenuIcon />
+                </IconButton>
+              )}
               <Typography variant="h6" component="div" sx={{ flexGrow: 1 }}>
                 Wagh Rental Units Tracker
               </Typography>
-              <Box sx={{ display: 'flex', gap: 2 }}>
-                <Link component={RouterLink} to="/" color="inherit">Dashboard</Link>
-                <Link component={RouterLink} to="/properties" color="inherit">Properties</Link>
-                <Link component={RouterLink} to="/tenants" color="inherit">Tenants</Link>
-                <Link component={RouterLink} to="/payments" color="inherit">Payments</Link>
-                <Link component={RouterLink} to="/expenses" color="inherit">Expenses</Link>
-                <Link component={RouterLink} to="/inbox" color="inherit">Inbox</Link>
-                <Link component={RouterLink} to="/chat" color="inherit">Chat</Link>
-              </Box>
+              {!isMobile && (
+                <Box sx={{ display: 'flex', gap: 2 }}>
+                  {navLinks.map((link) => (
+                    <Link key={link.to} component={RouterLink} to={link.to} color="inherit">
+                      {link.label}
+                    </Link>
+                  ))}
+                </Box>
+              )}
             </Toolbar>
           </AppBar>
+
+          {/* Mobile drawer */}
+          <Drawer anchor="left" open={drawerOpen} onClose={toggleDrawer(false)}>
+            <Box
+              sx={{ width: 250 }}
+              role="presentation"
+              onClick={toggleDrawer(false)}
+              onKeyDown={toggleDrawer(false)}
+            >
+              <Typography variant="h6" sx={{ p: 2, borderBottom: 1, borderColor: 'divider' }}>
+                Navigation
+              </Typography>
+              <List>
+                {navLinks.map((link) => (
+                  <ListItem key={link.to} disablePadding>
+                    <ListItemButton component={RouterLink} to={link.to}>
+                      <ListItemText primary={link.label} />
+                    </ListItemButton>
+                  </ListItem>
+                ))}
+              </List>
+            </Box>
+          </Drawer>
+
           <Container component="main" sx={{ mt: 4, mb: 4, flex: 1 }}>
             <Grid container spacing={3}>
               <Grid item xs={12}>
