@@ -249,6 +249,72 @@ async function mapUtilityToProperty(prisma, propertyKey) {
   return null;
 }
 
+// Parse Amazon.ca order confirmation email
+function parseAmazonEmail(headers, htmlBody) {
+  const subject = headers.find(h => h.name.toLowerCase() === 'subject')?.value || '';
+  const dateStr = headers.find(h => h.name.toLowerCase() === 'date')?.value || '';
+
+  // Strip HTML to plain text for parsing
+  const text = htmlBody
+    .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&[a-z#0-9]+;/gi, ' ')
+    .replace(/\s+/g, ' ');
+
+  // Extract order total: "Total $XX.XX"
+  let amount = null;
+  const totalMatch = text.match(/Total\s+\$([\d,]+\.\d{2})/i);
+  if (totalMatch) {
+    amount = parseFloat(totalMatch[1].replace(/,/g, ''));
+  }
+
+  // Extract city from "Pratik – Calgary, Alberta" or "Pratik – Edmonton, Alberta"
+  let city = null;
+  const cityMatch = text.match(/Pratik\s+.{1,5}\s+(Calgary|Edmonton)\s*,\s*Alberta/i);
+  if (cityMatch) {
+    city = cityMatch[1].toLowerCase();
+  }
+
+  // Extract item name from subject
+  // New format: Ordered: "Item Name..." and X more items
+  // Old format: Your Amazon.ca order #XXX of N items
+  let itemName = 'Amazon.ca order';
+  const newFormat = subject.match(/Ordered:\s*"(.+?)(?:\.\.\.?)?"(?:\s+and\s+(\d+)\s+more)?/);
+  if (newFormat) {
+    itemName = newFormat[1].trim();
+    if (newFormat[2]) itemName += ` + ${newFormat[2]} more items`;
+  } else {
+    const oldFormat = subject.match(/order\s+#([\d-]+)/i);
+    if (oldFormat) itemName = `Amazon order #${oldFormat[1]}`;
+  }
+
+  const date = dateStr ? new Date(dateStr) : new Date();
+
+  return { amount, city, itemName, date };
+}
+
+// Get HTML body from email (Amazon emails are HTML-heavy)
+function getHtmlBody(payload) {
+  let html = '';
+  if (payload.mimeType === 'text/html' && payload.body?.data) {
+    html += Buffer.from(payload.body.data, 'base64url').toString('utf-8');
+  }
+  if (payload.parts) {
+    for (const part of payload.parts) {
+      if (part.mimeType === 'text/html' && part.body?.data) {
+        html += Buffer.from(part.body.data, 'base64url').toString('utf-8');
+      } else if (part.parts) {
+        for (const sub of part.parts) {
+          if (sub.mimeType === 'text/html' && sub.body?.data) {
+            html += Buffer.from(sub.body.data, 'base64url').toString('utf-8');
+          }
+        }
+      }
+    }
+  }
+  return html;
+}
+
 // Decode email body from base64
 function decodeBody(message) {
   const parts = message.payload?.parts || [];
@@ -292,7 +358,7 @@ async function scanGmail(prisma, options = {}) {
   }
 
   const gmail = await getGmailClient(syncState.refreshToken);
-  const results = { interac: 0, utility: 0, errors: [] };
+  const results = { interac: 0, utility: 0, amazon: 0, errors: [] };
 
   // Gmail accepts after:YYYY/M/D — strip leading zeros to be safe
   let afterClause = 'newer_than:14d';
@@ -384,6 +450,73 @@ async function scanGmail(prisma, options = {}) {
     }
   } catch (err) {
     results.errors.push(`Interac scan: ${err.message}`);
+  }
+
+  // Scan for Amazon.ca order confirmations
+  try {
+    const amazonQuery = `from:auto-confirm@amazon.ca ${afterClause} in:anywhere`;
+    let allAmazonMessages = [];
+    let amazonPageToken = null;
+
+    do {
+      const amazonRes = await gmail.users.messages.list({
+        userId: 'me',
+        q: amazonQuery,
+        maxResults,
+        pageToken: amazonPageToken,
+      });
+      allAmazonMessages = allAmazonMessages.concat(amazonRes.data.messages || []);
+      amazonPageToken = amazonRes.data.nextPageToken;
+    } while (amazonPageToken);
+
+    for (const msg of allAmazonMessages) {
+      try {
+        const existing = await prisma.pendingTransaction.findUnique({
+          where: { gmailMessageId: msg.id },
+        });
+        if (existing) continue;
+
+        const full = await gmail.users.messages.get({
+          userId: 'me',
+          id: msg.id,
+          format: 'full',
+        });
+
+        const headers = full.data.payload?.headers || [];
+        const htmlBody = getHtmlBody(full.data.payload);
+        const parsed = parseAmazonEmail(headers, htmlBody);
+
+        if (!parsed.amount) continue; // Skip if we can't determine the total
+
+        // Map city to property
+        let propertyId = null;
+        if (parsed.city) {
+          propertyId = await mapUtilityToProperty(prisma, parsed.city);
+        }
+
+        await prisma.pendingTransaction.create({
+          data: {
+            type: 'expense',
+            source: 'amazon_email',
+            gmailMessageId: msg.id,
+            senderName: 'Amazon.ca',
+            senderEmail: 'auto-confirm@amazon.ca',
+            amount: parsed.amount,
+            date: parsed.date,
+            description: `${parsed.itemName} (Amazon)`,
+            category: 'Home Improvement',
+            propertyId,
+            matchConfidence: parsed.amount && propertyId ? 'high' : parsed.amount ? 'medium' : 'none',
+            rawEmailSnippet: full.data.snippet?.substring(0, 500),
+          },
+        });
+        results.amazon++;
+      } catch (err) {
+        results.errors.push(`Amazon msg ${msg.id}: ${err.message}`);
+      }
+    }
+  } catch (err) {
+    results.errors.push(`Amazon scan: ${err.message}`);
   }
 
   // Scan for utility bills
