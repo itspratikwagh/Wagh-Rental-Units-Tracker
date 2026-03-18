@@ -68,8 +68,14 @@ module.exports = function (prisma) {
       if (req.body.maxResults) options.maxResults = req.body.maxResults;
 
       const results = await scanGmail(prisma, options);
+      const parts = [];
+      if (results.interac) parts.push(`${results.interac} rent payment(s)`);
+      if (results.outgoing_interac) parts.push(`${results.outgoing_interac} outgoing transfer(s)`);
+      if (results.amazon) parts.push(`${results.amazon} Amazon order(s)`);
+      if (results.utility) parts.push(`${results.utility} utility bill(s)`);
+      const summary = parts.length > 0 ? parts.join(', ') : 'no new items';
       res.json({
-        message: `Scan complete. Found ${results.interac} payment(s) and ${results.utility} utility bill(s).`,
+        message: `Scan complete. Found ${summary}.`,
         ...results,
       });
     } catch (error) {
