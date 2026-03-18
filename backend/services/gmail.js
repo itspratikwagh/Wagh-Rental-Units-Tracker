@@ -143,6 +143,49 @@ function parseInteracEmail(headers, bodyText) {
   return { senderName, amount, date };
 }
 
+// Parse outgoing Interac e-Transfer email
+// Subject: "Interac e-Transfer: Your $189.00 transfer to RACHAEL ROSS has been successfully deposited"
+function parseOutgoingInteracEmail(headers, bodyText) {
+  const subject = headers.find(h => h.name.toLowerCase() === 'subject')?.value || '';
+  const dateStr = headers.find(h => h.name.toLowerCase() === 'date')?.value || '';
+
+  let recipientName = null;
+  let amount = null;
+
+  const match = subject.match(/Your\s+\$?([\d,]+\.?\d*)\s+transfer\s+to\s+(.+?)\s+has been successfully deposited/i);
+  if (match) {
+    amount = parseFloat(match[1].replace(/,/g, ''));
+    recipientName = match[2].trim();
+  }
+
+  // Fallback: try body text
+  if (!amount && bodyText) {
+    const bodyMatch = bodyText.match(/\$?([\d,]+\.?\d*)\s+transfer\s+to\s+(.+?)\s+has been/i);
+    if (bodyMatch) {
+      amount = parseFloat(bodyMatch[1].replace(/,/g, ''));
+      recipientName = bodyMatch[2].trim();
+    }
+  }
+
+  // Extract message/note from body if present
+  let note = null;
+  if (bodyText) {
+    const noteMatch = bodyText.match(/[Mm]essage[:\s]*["""]?([^"""<\n\r]{3,100})/);
+    if (noteMatch) note = noteMatch[1].trim();
+  }
+
+  const date = dateStr ? new Date(dateStr) : new Date();
+  return { recipientName, amount, date, note };
+}
+
+// Known outgoing Interac recipients to SKIP (not property expenses)
+const OUTGOING_INTERAC_SKIP = [
+  /kraken/i,          // Crypto exchange
+  /sandip\s+das/i,    // Personal loan
+  /evelyn\s+ackah/i,  // Immigration lawyer
+  /xiujin\s+ju/i,     // Airbnb
+];
+
 // Parse utility bill email
 function parseUtilityEmail(headers, bodyText, parser) {
   const dateStr = headers.find(h => h.name.toLowerCase() === 'date')?.value || '';
@@ -358,7 +401,7 @@ async function scanGmail(prisma, options = {}) {
   }
 
   const gmail = await getGmailClient(syncState.refreshToken);
-  const results = { interac: 0, utility: 0, amazon: 0, errors: [] };
+  const results = { interac: 0, outgoing_interac: 0, utility: 0, amazon: 0, errors: [] };
 
   // Gmail accepts after:YYYY/M/D — strip leading zeros to be safe
   let afterClause = 'newer_than:14d';
@@ -450,6 +493,79 @@ async function scanGmail(prisma, options = {}) {
     }
   } catch (err) {
     results.errors.push(`Interac scan: ${err.message}`);
+  }
+
+  // Scan for outgoing Interac e-Transfers (expenses paid via e-Transfer)
+  try {
+    const outgoingQuery = `from:payments.interac.ca subject:"Your" subject:"transfer to" ${afterClause} in:anywhere`;
+    let allOutgoingMessages = [];
+    let outgoingPageToken = null;
+
+    do {
+      const outRes = await gmail.users.messages.list({
+        userId: 'me',
+        q: outgoingQuery,
+        maxResults,
+        pageToken: outgoingPageToken,
+      });
+      allOutgoingMessages = allOutgoingMessages.concat(outRes.data.messages || []);
+      outgoingPageToken = outRes.data.nextPageToken;
+    } while (outgoingPageToken);
+
+    for (const msg of allOutgoingMessages) {
+      try {
+        const existing = await prisma.pendingTransaction.findUnique({
+          where: { gmailMessageId: msg.id },
+        });
+        if (existing) continue;
+
+        const full = await gmail.users.messages.get({
+          userId: 'me',
+          id: msg.id,
+          format: 'full',
+        });
+
+        const headers = full.data.payload?.headers || [];
+        const bodyText = decodeBody(full.data);
+        const parsed = parseOutgoingInteracEmail(headers, bodyText);
+
+        if (!parsed.amount) continue;
+
+        // Skip known non-property recipients
+        if (parsed.recipientName && OUTGOING_INTERAC_SKIP.some(re => re.test(parsed.recipientName))) {
+          continue;
+        }
+
+        // Also skip deposit returns (subject contains "return" or "cancel")
+        const subject = headers.find(h => h.name.toLowerCase() === 'subject')?.value || '';
+        if (/return|cancel/i.test(subject)) continue;
+
+        const desc = parsed.note
+          ? `Interac transfer to ${parsed.recipientName || 'Unknown'} - ${parsed.note}`
+          : `Interac transfer to ${parsed.recipientName || 'Unknown'}`;
+
+        await prisma.pendingTransaction.create({
+          data: {
+            type: 'expense',
+            source: 'outgoing_interac_email',
+            gmailMessageId: msg.id,
+            senderName: parsed.recipientName,
+            amount: parsed.amount,
+            date: parsed.date,
+            description: desc,
+            category: 'Maintenance',
+            propertyId: null, // User assigns property during review
+            matchConfidence: 'medium',
+            rawEmailSnippet: full.data.snippet?.substring(0, 500),
+          },
+        });
+        results.outgoing_interac++;
+      } catch (err) {
+        results.errors.push(`Outgoing Interac msg ${msg.id}: ${err.message}`);
+      }
+    }
+  } catch (err) {
+    results.errors.push(`Outgoing Interac scan: ${err.message}`);
   }
 
   // Scan for Amazon.ca order confirmations
