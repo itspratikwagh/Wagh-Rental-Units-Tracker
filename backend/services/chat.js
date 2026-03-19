@@ -98,11 +98,9 @@ async function buildDataContext(prisma) {
     prisma.payment.findMany({
       include: { Tenant: true },
       orderBy: { date: 'desc' },
-      take: 200,
     }),
     prisma.expense.findMany({
       orderBy: { date: 'desc' },
-      take: 200,
     }),
   ]);
 
@@ -146,10 +144,10 @@ ${JSON.stringify(properties.map(p => ({ id: p.id, name: p.name, address: p.addre
 TENANTS:
 ${JSON.stringify(tenantSummary, null, 2)}
 
-RECENT PAYMENTS (up to 200, newest first):
+ALL PAYMENTS (newest first):
 ${JSON.stringify(paymentSummary, null, 2)}
 
-RECENT EXPENSES (up to 200, newest first):
+ALL EXPENSES (newest first):
 ${JSON.stringify(expenseSummary, null, 2)}
 
 Today's date: ${new Date().toISOString().split('T')[0]}
