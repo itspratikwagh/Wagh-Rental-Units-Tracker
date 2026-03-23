@@ -121,6 +121,15 @@ export default function Inbox() {
   const getTenantName = (id) => tenants.find(t => t.id === id)?.name || 'Unknown';
   const getPropertyName = (id) => properties.find(p => p.id === id)?.name || 'Unknown';
 
+  const sourceLabels = {
+    interac_email: 'Interac e-Transfer',
+    outgoing_interac_email: 'Outgoing e-Transfer',
+    utility_email: 'Utility Bill',
+    amazon_email: 'Amazon Order',
+    other_email: 'Other',
+  };
+  const getSourceLabel = (source) => sourceLabels[source] || source;
+
   const highConfidenceCount = pending.filter(p => p.status === 'pending' && p.matchConfidence === 'high').length;
 
   if (loading) return <Box sx={{ display: 'flex', justifyContent: 'center', p: 4 }}><CircularProgress /></Box>;
@@ -215,7 +224,10 @@ export default function Inbox() {
                   <TableCell>{new Date(item.date).toLocaleDateString()}</TableCell>
                   <TableCell>
                     <Tooltip title={item.rawEmailSnippet || ''}>
-                      <span>{item.senderName || item.source}</span>
+                      <Box>
+                        <Typography variant="body2">{item.description || item.senderName || item.source}</Typography>
+                        <Typography variant="caption" color="text.secondary">{getSourceLabel(item.source)}</Typography>
+                      </Box>
                     </Tooltip>
                   </TableCell>
                   <TableCell align="right">

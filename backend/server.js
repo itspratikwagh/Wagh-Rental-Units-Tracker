@@ -604,12 +604,12 @@ app.get('/health', (req, res) => {
   res.json({ status: 'ok' });
 });
 
-// Scan Gmail every 6 hours (if connected)
+// Scan Gmail every 6 hours using AI scanner (if connected)
 cron.schedule('0 */6 * * *', async () => {
   try {
-    const { scanGmail } = require('./services/gmail');
-    const results = await scanGmail(prisma);
-    console.log(`[Cron] Gmail scan: ${results.interac} payments, ${results.utility} utility bills`);
+    const { scanGmailWithAI } = require('./services/gmailAiScanner');
+    const results = await scanGmailWithAI(prisma);
+    console.log(`[Cron] Gmail AI scan: ${results.payments} payments, ${results.expenses} expenses`);
   } catch (err) {
     // Not connected or scan failed — skip silently
     if (!err.message.includes('not connected')) {

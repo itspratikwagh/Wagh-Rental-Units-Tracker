@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
-const { getAuthUrl, exchangeCode, scanGmail, getRentMonth } = require('../services/gmail');
+const { getAuthUrl, exchangeCode, getRentMonth } = require('../services/gmail');
+const { scanGmailWithAI } = require('../services/gmailAiScanner');
 
 module.exports = function (prisma) {
   // Start OAuth2 flow
@@ -67,15 +68,13 @@ module.exports = function (prisma) {
       if (req.body.afterDate) options.afterDate = req.body.afterDate;
       if (req.body.maxResults) options.maxResults = req.body.maxResults;
 
-      const results = await scanGmail(prisma, options);
+      const results = await scanGmailWithAI(prisma, options);
       const parts = [];
-      if (results.interac) parts.push(`${results.interac} rent payment(s)`);
-      if (results.outgoing_interac) parts.push(`${results.outgoing_interac} outgoing transfer(s)`);
-      if (results.amazon) parts.push(`${results.amazon} Amazon order(s)`);
-      if (results.utility) parts.push(`${results.utility} utility bill(s)`);
+      if (results.payments) parts.push(`${results.payments} payment(s)`);
+      if (results.expenses) parts.push(`${results.expenses} expense(s)`);
       const summary = parts.length > 0 ? parts.join(', ') : 'no new items';
       res.json({
-        message: `Scan complete. Found ${summary}.`,
+        message: `Scan complete. Found ${summary} (${results.total} total).`,
         ...results,
       });
     } catch (error) {
