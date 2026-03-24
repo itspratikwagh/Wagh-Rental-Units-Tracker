@@ -51,8 +51,15 @@ export default function Inbox() {
     setScanning(true);
     setScanResult(null);
     try {
-      const res = await fetch(`${API}/api/gmail/scan`, { method: 'POST' });
+      const res = await fetch(`${API}/api/gmail/scan`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      });
       const data = await res.json();
+      if (data.reconnect) {
+        // Token expired — refresh status so "Connect Gmail" button appears
+        setGmailStatus({ connected: false, lastSyncAt: null });
+      }
       setScanResult(data);
       fetchData();
     } catch (err) {

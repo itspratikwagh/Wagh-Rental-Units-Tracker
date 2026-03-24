@@ -79,7 +79,11 @@ module.exports = function (prisma) {
       });
     } catch (error) {
       console.error('Gmail scan error:', error);
-      res.status(500).json({ error: error.message });
+      const isTokenError = error.message.includes('expired') || error.message.includes('reconnect');
+      res.status(isTokenError ? 401 : 500).json({
+        error: error.message,
+        reconnect: isTokenError,
+      });
     }
   });
 

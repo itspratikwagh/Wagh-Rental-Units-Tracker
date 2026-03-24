@@ -313,7 +313,23 @@ async function scanGmailWithAI(prisma, options = {}) {
     throw new Error('Gmail not connected. Please authorize first.');
   }
 
-  const gmail = await getGmailClient(syncState.refreshToken);
+  let gmail;
+  try {
+    gmail = await getGmailClient(syncState.refreshToken);
+    // Test the connection with a lightweight call
+    await gmail.users.getProfile({ userId: 'me' });
+  } catch (err) {
+    const msg = err.message || '';
+    if (msg.includes('invalid_grant') || msg.includes('invalid_request') || msg.includes('Token has been expired or revoked')) {
+      // Clear the stale token so the frontend shows "Connect Gmail" again
+      await prisma.gmailSyncState.update({
+        where: { id: syncState.id },
+        data: { refreshToken: null },
+      });
+      throw new Error('Gmail token expired. Please reconnect Gmail.');
+    }
+    throw err;
+  }
 
   // Build date filter
   let afterClause = 'newer_than:14d';
