@@ -254,9 +254,50 @@ async function analyzeWithClaude(emails, systemPrompt) {
   }
 }
 
+// Check if a transaction already exists in the DB (expenses or payments)
+// Returns the matching record description if found, null if no match
+async function findExistingInDB(prisma, tx) {
+  const amount = typeof tx.amount === 'number' ? tx.amount : parseFloat(tx.amount) || 0;
+  const txDate = tx.date ? new Date(tx.date) : new Date();
+  const threeDaysMs = 3 * 24 * 60 * 60 * 1000;
+
+  if (tx.type === 'expense') {
+    const expenses = await prisma.expense.findMany({
+      where: {
+        date: {
+          gte: new Date(txDate.getTime() - threeDaysMs),
+          lte: new Date(txDate.getTime() + threeDaysMs),
+        },
+      },
+    });
+    const match = expenses.find(e => Math.abs(e.amount - amount) < 0.02);
+    if (match) {
+      return `Existing expense: ${match.date.toISOString().slice(0, 10)} $${match.amount} "${match.description || ''}"`;
+    }
+  }
+
+  if (tx.type === 'payment') {
+    const payments = await prisma.payment.findMany({
+      where: {
+        date: {
+          gte: new Date(txDate.getTime() - threeDaysMs),
+          lte: new Date(txDate.getTime() + threeDaysMs),
+        },
+      },
+      include: { Tenant: true },
+    });
+    const match = payments.find(p => Math.abs(p.amount - amount) < 0.02);
+    if (match) {
+      return `Existing payment: ${match.date.toISOString().slice(0, 10)} $${match.amount} from ${match.Tenant?.name || 'unknown'}`;
+    }
+  }
+
+  return null;
+}
+
 // Create PendingTransaction records from Claude's analysis
 async function createPendingTransactions(prisma, transactions, emailMap) {
-  const results = { payments: 0, expenses: 0, errors: [] };
+  const results = { payments: 0, expenses: 0, autoRejected: 0, errors: [] };
 
   for (const tx of transactions) {
     try {
@@ -266,15 +307,43 @@ async function createPendingTransactions(prisma, transactions, emailMap) {
         continue;
       }
 
-      // Double-check dedup
+      // Double-check dedup against pending transactions
       const existing = await prisma.pendingTransaction.findUnique({
         where: { gmailMessageId: tx.gmailMessageId },
       });
       if (existing) continue;
 
+      // Check if this transaction already exists in the actual DB
+      const dbMatch = await findExistingInDB(prisma, tx);
+
       // Get the snippet from our fetched email data
       const emailData = emailMap.get(tx.gmailMessageId);
       const rawSnippet = emailData?.snippet?.substring(0, 500) || '';
+
+      if (dbMatch) {
+        // Auto-reject — already in DB
+        await prisma.pendingTransaction.create({
+          data: {
+            type: tx.type,
+            source: tx.source || 'other_email',
+            gmailMessageId: tx.gmailMessageId,
+            senderName: tx.senderName || null,
+            senderEmail: tx.senderEmail || null,
+            amount: typeof tx.amount === 'number' ? tx.amount : parseFloat(tx.amount) || 0,
+            date: tx.date ? new Date(tx.date) : new Date(),
+            description: `[AUTO-REJECTED: ${dbMatch}] ${tx.description || ''}`,
+            category: tx.category || null,
+            propertyId: tx.propertyId || null,
+            tenantId: tx.tenantId || null,
+            matchConfidence: tx.matchConfidence || 'none',
+            rawEmailSnippet: rawSnippet,
+            status: 'rejected',
+            reviewedAt: new Date(),
+          },
+        });
+        results.autoRejected++;
+        continue;
+      }
 
       await prisma.pendingTransaction.create({
         data: {
@@ -450,4 +519,4 @@ async function scanGmailWithAI(prisma, options = {}) {
   return totalResults;
 }
 
-module.exports = { scanGmailWithAI };
+module.exports = { scanGmailWithAI, findExistingInDB };

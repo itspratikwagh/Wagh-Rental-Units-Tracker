@@ -89,10 +89,11 @@ module.exports = function (prisma) {
       if (results.payments) parts.push(`${results.payments} payment(s)`);
       if (results.expenses) parts.push(`${results.expenses} expense(s)`);
       const summary = parts.length > 0 ? parts.join(', ') : 'no new items';
+      const autoRej = results.autoRejected ? ` (${results.autoRejected} auto-rejected as duplicates)` : '';
 
       const log = results.scanLog || {};
       res.json({
-        message: `Scan complete. Checked ${log.totalFetched || 0} emails: ${log.newEmails || 0} new, ${log.skippedDuplicates || 0} already processed. Found ${summary}.`,
+        message: `Scan complete. Checked ${log.totalFetched || 0} emails: ${log.newEmails || 0} new, ${log.skippedDuplicates || 0} already processed. Found ${summary}.${autoRej}`,
         ...results,
       });
     } catch (error) {
