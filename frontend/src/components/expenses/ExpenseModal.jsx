@@ -11,13 +11,16 @@ import {
 } from '@mui/material';
 
 const EXPENSE_CATEGORIES = [
+  'Airbnb',
+  'Home Improvement',
+  'Insurance',
+  'Internet Bills',
+  'Licenses & Permits',
+  'Maintenance',
   'Mortgage',
+  'Property Management',
   'Property Taxes',
   'Utility Bills',
-  'Internet Bills',
-  'Home Improvement',
-  'Maintenance',
-  'Insurance',
   'Other'
 ];
 

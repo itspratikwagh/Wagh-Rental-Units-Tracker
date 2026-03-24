@@ -45,13 +45,16 @@ import ExpenseModal from './expenses/ExpenseModal';
 import ConfirmDialog from './common/ConfirmDialog';
 
 const EXPENSE_CATEGORIES = [
+  'Airbnb',
+  'Home Improvement',
+  'Insurance',
+  'Internet Bills',
+  'Licenses & Permits',
+  'Maintenance',
   'Mortgage',
+  'Property Management',
   'Property Taxes',
   'Utility Bills',
-  'Internet Bills',
-  'Home Improvement',
-  'Maintenance',
-  'Insurance',
   'Other'
 ];
 
