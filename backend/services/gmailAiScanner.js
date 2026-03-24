@@ -136,8 +136,9 @@ async function fetchRecentEmails(gmail, prisma, afterClause, maxResults) {
   });
   const existingIds = new Set(existing.map(e => e.gmailMessageId));
   const newIds = allMessageIds.filter(id => !existingIds.has(id));
+  const skippedIds = allMessageIds.filter(id => existingIds.has(id));
 
-  return newIds;
+  return { newIds, skippedIds, totalFetched: allMessageIds.length };
 }
 
 // Fetch email content for a batch of message IDs
@@ -347,17 +348,44 @@ async function scanGmailWithAI(prisma, options = {}) {
   const maxResults = options.maxResults || 100;
 
   // Step 1: Fetch all new email IDs
-  const newMessageIds = await fetchRecentEmails(gmail, prisma, afterClause, maxResults);
+  const { newIds: newMessageIds, skippedIds, totalFetched } = await fetchRecentEmails(gmail, prisma, afterClause, maxResults);
+
+  // Fetch subjects of skipped emails for the scan log (last 10)
+  const skippedSummary = [];
+  for (const id of skippedIds.slice(0, 10)) {
+    try {
+      const msg = await gmail.users.messages.get({
+        userId: 'me',
+        id,
+        format: 'metadata',
+        metadataHeaders: ['Subject', 'From', 'Date'],
+      });
+      const headers = msg.data.payload?.headers || [];
+      skippedSummary.push({
+        subject: headers.find(h => h.name === 'Subject')?.value || '(no subject)',
+        from: headers.find(h => h.name === 'From')?.value || '',
+        date: headers.find(h => h.name === 'Date')?.value || '',
+      });
+    } catch (e) { /* skip */ }
+  }
 
   if (newMessageIds.length === 0) {
     await prisma.gmailSyncState.update({
       where: { id: syncState.id },
       data: { lastSyncAt: new Date() },
     });
-    return { payments: 0, expenses: 0, total: 0, errors: [] };
+    return {
+      payments: 0, expenses: 0, total: 0, errors: [],
+      scanLog: {
+        totalFetched,
+        newEmails: 0,
+        skippedDuplicates: skippedIds.length,
+        skippedSamples: skippedSummary,
+      },
+    };
   }
 
-  console.log(`Found ${newMessageIds.length} new emails to analyze`);
+  console.log(`Found ${newMessageIds.length} new emails to analyze (${skippedIds.length} skipped as duplicates)`);
 
   // Step 2: Build context
   const { propertyList, tenantList } = await buildScanContext(prisma);
@@ -411,6 +439,13 @@ async function scanGmailWithAI(prisma, options = {}) {
   if (totalResults.errors.length > 0) {
     console.error('Scan errors:', totalResults.errors);
   }
+
+  totalResults.scanLog = {
+    totalFetched,
+    newEmails: newMessageIds.length,
+    skippedDuplicates: skippedIds.length,
+    skippedSamples: skippedSummary,
+  };
 
   return totalResults;
 }

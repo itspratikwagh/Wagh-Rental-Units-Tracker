@@ -61,20 +61,38 @@ module.exports = function (prisma) {
   });
 
   // Manual scan trigger
-  // Body can include { afterDate: "2025/10/25" } for historical scan
+  // Body can include:
+  //   { afterDate: "2025/01/01" } for historical scan
+  //   { rescan: true } to ignore lastSyncAt and scan last 30 days
+  //   { maxResults: 200 } to increase email fetch limit
   router.post('/scan', async (req, res) => {
     try {
       const options = {};
       if (req.body.afterDate) options.afterDate = req.body.afterDate;
       if (req.body.maxResults) options.maxResults = req.body.maxResults;
 
+      // Rescan mode: temporarily reset lastSyncAt so we go back further
+      if (req.body.rescan) {
+        const syncState = await prisma.gmailSyncState.findFirst();
+        if (syncState) {
+          const thirtyDaysAgo = new Date();
+          thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+          await prisma.gmailSyncState.update({
+            where: { id: syncState.id },
+            data: { lastSyncAt: thirtyDaysAgo },
+          });
+        }
+      }
+
       const results = await scanGmailWithAI(prisma, options);
       const parts = [];
       if (results.payments) parts.push(`${results.payments} payment(s)`);
       if (results.expenses) parts.push(`${results.expenses} expense(s)`);
       const summary = parts.length > 0 ? parts.join(', ') : 'no new items';
+
+      const log = results.scanLog || {};
       res.json({
-        message: `Scan complete. Found ${summary} (${results.total} total).`,
+        message: `Scan complete. Checked ${log.totalFetched || 0} emails: ${log.newEmails || 0} new, ${log.skippedDuplicates || 0} already processed. Found ${summary}.`,
         ...results,
       });
     } catch (error) {
