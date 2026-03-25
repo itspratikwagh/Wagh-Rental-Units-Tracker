@@ -17,8 +17,20 @@ import FormControl from '@mui/material/FormControl';
 import InputLabel from '@mui/material/InputLabel';
 import Select from '@mui/material/Select';
 import MenuItem from '@mui/material/MenuItem';
+import TextField from '@mui/material/TextField';
+import Dialog from '@mui/material/Dialog';
+import DialogTitle from '@mui/material/DialogTitle';
+import DialogContent from '@mui/material/DialogContent';
+import DialogActions from '@mui/material/DialogActions';
+import EditIcon from '@mui/icons-material/Edit';
+import IconButton from '@mui/material/IconButton';
 import axios from 'axios';
 import config from '../config';
+
+const formatCurrency = (value) =>
+  new Intl.NumberFormat('en-CA', { style: 'currency', currency: 'CAD', maximumFractionDigits: 0 }).format(value || 0);
+
+const formatPct = (value) => `${value >= 0 ? '+' : ''}${(value || 0).toFixed(1)}%`;
 
 function Dashboard() {
   const [properties, setProperties] = useState([]);
@@ -30,17 +42,22 @@ function Dashboard() {
   const [modalOpen, setModalOpen] = useState(false);
   const [tabValue, setTabValue] = useState(0);
   const [selectedProperty, setSelectedProperty] = useState('all');
+  const [investmentStats, setInvestmentStats] = useState(null);
+  const [investmentTab, setInvestmentTab] = useState(0);
+  const [editDialogOpen, setEditDialogOpen] = useState(false);
+  const [editValues, setEditValues] = useState({ propertyId: '', currentMarketValue: '', currentMortgageBal: '' });
 
   useEffect(() => {
     const fetchData = async () => {
       try {
         // Fetch both active and archived tenants to get complete data
-        const [propertiesRes, activeTenantsRes, archivedTenantsRes, paymentsRes, expensesRes] = await Promise.all([
+        const [propertiesRes, activeTenantsRes, archivedTenantsRes, paymentsRes, expensesRes, investmentRes] = await Promise.all([
           axios.get(`${config.apiUrl}/api/properties`),
           axios.get(`${config.apiUrl}/api/tenants`),
           axios.get(`${config.apiUrl}/api/tenants?includeArchived=true`),
           axios.get(`${config.apiUrl}/api/payments`),
-          axios.get(`${config.apiUrl}/api/expenses`)
+          axios.get(`${config.apiUrl}/api/expenses`),
+          axios.get(`${config.apiUrl}/api/dashboard/investment-stats`).catch(() => ({ data: null })),
         ]);
         
         // Combine active and archived tenants, removing duplicates
@@ -59,6 +76,7 @@ function Dashboard() {
         setTenants(allTenants);
         setPayments(paymentsRes.data);
         setExpenses(expensesRes.data);
+        if (investmentRes.data) setInvestmentStats(investmentRes.data);
       } catch (error) {
         console.error('Error fetching data:', error);
       } finally {
@@ -326,6 +344,229 @@ function Dashboard() {
           </Paper>
         </Grid>
       </Grid>
+
+      {/* Investment Returns Section */}
+      {investmentStats && investmentStats.properties.length > 0 && (
+        <Box sx={{ mt: 4 }}>
+          <Typography variant="h5" gutterBottom>
+            Investment Returns
+          </Typography>
+          <Tabs
+            value={investmentTab}
+            onChange={(e, v) => setInvestmentTab(v)}
+            sx={{ mb: 2 }}
+          >
+            {investmentStats.properties.map((p) => (
+              <Tab key={p.propertyId} label={p.propertyName} />
+            ))}
+            <Tab label="Portfolio" />
+          </Tabs>
+
+          {investmentStats.properties.map((stat, idx) => (
+            investmentTab === idx && (
+              <Box key={stat.propertyId}>
+                {/* Purchase Details */}
+                <Typography variant="subtitle2" color="text.secondary" sx={{ mb: 1 }}>
+                  Purchase Details ({stat.yearsHeld} years held)
+                </Typography>
+                <Grid container spacing={2} sx={{ mb: 3 }}>
+                  {[
+                    { label: 'Purchase Price', value: formatCurrency(stat.purchasePrice) },
+                    { label: 'Down Payment (5%)', value: formatCurrency(stat.downPayment) },
+                    { label: 'Closing Costs', value: formatCurrency(stat.closingCosts) },
+                    { label: 'Total Cash Invested', value: formatCurrency(stat.totalCashInvested), bold: true },
+                  ].map((card) => (
+                    <Grid item xs={6} md={3} key={card.label}>
+                      <Paper sx={{ p: 2, height: 100, display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
+                        <Typography variant="body2" color="text.secondary">{card.label}</Typography>
+                        <Typography variant="h6" sx={{ fontWeight: card.bold ? 700 : 400 }}>{card.value}</Typography>
+                      </Paper>
+                    </Grid>
+                  ))}
+                </Grid>
+
+                {/* Current Position */}
+                <Typography variant="subtitle2" color="text.secondary" sx={{ mb: 1 }}>
+                  Current Position
+                </Typography>
+                <Grid container spacing={2} sx={{ mb: 3 }}>
+                  <Grid item xs={6} md={3}>
+                    <Paper sx={{ p: 2, height: 100, display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
+                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                        <Typography variant="body2" color="text.secondary">Market Value</Typography>
+                        <IconButton size="small" onClick={() => {
+                          setEditValues({ propertyId: stat.propertyId, currentMarketValue: stat.currentMarketValue || '', currentMortgageBal: stat.currentMortgageBal || '' });
+                          setEditDialogOpen(true);
+                        }}><EditIcon sx={{ fontSize: 16 }} /></IconButton>
+                      </Box>
+                      <Typography variant="h6">{formatCurrency(stat.currentMarketValue)}</Typography>
+                    </Paper>
+                  </Grid>
+                  <Grid item xs={6} md={3}>
+                    <Paper sx={{ p: 2, height: 100, display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
+                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                        <Typography variant="body2" color="text.secondary">Mortgage Balance</Typography>
+                        <IconButton size="small" onClick={() => {
+                          setEditValues({ propertyId: stat.propertyId, currentMarketValue: stat.currentMarketValue || '', currentMortgageBal: stat.currentMortgageBal || '' });
+                          setEditDialogOpen(true);
+                        }}><EditIcon sx={{ fontSize: 16 }} /></IconButton>
+                      </Box>
+                      <Typography variant="h6" color="error">{formatCurrency(stat.currentMortgageBal)}</Typography>
+                    </Paper>
+                  </Grid>
+                  {[
+                    { label: 'Total Equity', value: formatCurrency(stat.totalEquity), color: 'success.main' },
+                    { label: 'Appreciation', value: formatCurrency(stat.appreciation), color: stat.appreciation >= 0 ? 'success.main' : 'error' },
+                  ].map((card) => (
+                    <Grid item xs={6} md={3} key={card.label}>
+                      <Paper sx={{ p: 2, height: 100, display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
+                        <Typography variant="body2" color="text.secondary">{card.label}</Typography>
+                        <Typography variant="h6" color={card.color}>{card.value}</Typography>
+                      </Paper>
+                    </Grid>
+                  ))}
+                </Grid>
+
+                {/* Returns Breakdown */}
+                <Typography variant="subtitle2" color="text.secondary" sx={{ mb: 1 }}>
+                  Returns Breakdown
+                </Typography>
+                <Grid container spacing={2} sx={{ mb: 3 }}>
+                  {[
+                    { label: 'Appreciation', value: formatCurrency(stat.appreciation), color: stat.appreciation >= 0 ? 'success.main' : 'error' },
+                    { label: 'Equity Buildup', value: formatCurrency(stat.equityFromMortgage), color: 'success.main' },
+                    { label: 'Net Cash Flow', value: formatCurrency(stat.totalCashFlow), color: stat.totalCashFlow >= 0 ? 'success.main' : 'error' },
+                    { label: 'Total Return', value: formatCurrency(stat.totalReturn), color: stat.totalReturn >= 0 ? 'success.main' : 'error', bold: true },
+                  ].map((card) => (
+                    <Grid item xs={6} md={3} key={card.label}>
+                      <Paper sx={{ p: 2, height: 100, display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
+                        <Typography variant="body2" color="text.secondary">{card.label}</Typography>
+                        <Typography variant="h6" color={card.color} sx={{ fontWeight: card.bold ? 700 : 400 }}>{card.value}</Typography>
+                      </Paper>
+                    </Grid>
+                  ))}
+                </Grid>
+
+                {/* ROI Metrics */}
+                <Typography variant="subtitle2" color="text.secondary" sx={{ mb: 1 }}>
+                  ROI Metrics
+                </Typography>
+                <Grid container spacing={2} sx={{ mb: 2 }}>
+                  {[
+                    { label: 'Total ROI', value: formatPct(stat.totalROI) },
+                    { label: 'Annualized ROI', value: formatPct(stat.annualizedROI) },
+                    { label: 'Cash-on-Cash', value: formatPct(stat.cashOnCash) },
+                    { label: 'Cap Rate', value: `${(stat.capRate || 0).toFixed(1)}%` },
+                    { label: 'Equity Multiple', value: `${(stat.equityMultiple || 0).toFixed(2)}x` },
+                  ].map((card) => (
+                    <Grid item xs={6} md={2.4} key={card.label}>
+                      <Paper sx={{ p: 2, height: 100, display: 'flex', flexDirection: 'column', justifyContent: 'center', textAlign: 'center' }}>
+                        <Typography variant="body2" color="text.secondary">{card.label}</Typography>
+                        <Typography variant="h6" color={parseFloat(card.value) >= 0 ? 'success.main' : 'error'}>{card.value}</Typography>
+                      </Paper>
+                    </Grid>
+                  ))}
+                </Grid>
+              </Box>
+            )
+          ))}
+
+          {/* Portfolio Tab */}
+          {investmentTab === investmentStats.properties.length && (
+            <Box>
+              <Grid container spacing={2} sx={{ mb: 3 }}>
+                {[
+                  { label: 'Total Cash Invested', value: formatCurrency(investmentStats.portfolio.totalCashInvested) },
+                  { label: 'Total Market Value', value: formatCurrency(investmentStats.portfolio.totalMarketValue) },
+                  { label: 'Total Mortgage Balance', value: formatCurrency(investmentStats.portfolio.totalMortgageBal), color: 'error' },
+                  { label: 'Total Equity', value: formatCurrency(investmentStats.portfolio.totalEquity), color: 'success.main', bold: true },
+                ].map((card) => (
+                  <Grid item xs={6} md={3} key={card.label}>
+                    <Paper sx={{ p: 2, height: 100, display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
+                      <Typography variant="body2" color="text.secondary">{card.label}</Typography>
+                      <Typography variant="h6" color={card.color} sx={{ fontWeight: card.bold ? 700 : 400 }}>{card.value}</Typography>
+                    </Paper>
+                  </Grid>
+                ))}
+              </Grid>
+              <Grid container spacing={2} sx={{ mb: 3 }}>
+                {[
+                  { label: 'Total Appreciation', value: formatCurrency(investmentStats.portfolio.totalAppreciation), color: 'success.main' },
+                  { label: 'Equity from Mortgage', value: formatCurrency(investmentStats.portfolio.totalEquityFromMortgage), color: 'success.main' },
+                  { label: 'Net Cash Flow', value: formatCurrency(investmentStats.portfolio.totalCashFlow), color: investmentStats.portfolio.totalCashFlow >= 0 ? 'success.main' : 'error' },
+                  { label: 'Total Return', value: formatCurrency(investmentStats.portfolio.totalReturn), color: investmentStats.portfolio.totalReturn >= 0 ? 'success.main' : 'error', bold: true },
+                ].map((card) => (
+                  <Grid item xs={6} md={3} key={card.label}>
+                    <Paper sx={{ p: 2, height: 100, display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
+                      <Typography variant="body2" color="text.secondary">{card.label}</Typography>
+                      <Typography variant="h6" color={card.color} sx={{ fontWeight: card.bold ? 700 : 400 }}>{card.value}</Typography>
+                    </Paper>
+                  </Grid>
+                ))}
+              </Grid>
+              <Grid container spacing={2}>
+                {[
+                  { label: 'Total ROI', value: formatPct(investmentStats.portfolio.totalROI) },
+                  { label: 'Equity Multiple', value: `${(investmentStats.portfolio.equityMultiple || 0).toFixed(2)}x` },
+                ].map((card) => (
+                  <Grid item xs={6} md={3} key={card.label}>
+                    <Paper sx={{ p: 2, height: 100, display: 'flex', flexDirection: 'column', justifyContent: 'center', textAlign: 'center' }}>
+                      <Typography variant="body2" color="text.secondary">{card.label}</Typography>
+                      <Typography variant="h6" color={parseFloat(card.value) >= 0 ? 'success.main' : 'error'}>{card.value}</Typography>
+                    </Paper>
+                  </Grid>
+                ))}
+              </Grid>
+            </Box>
+          )}
+        </Box>
+      )}
+
+      {/* Edit Market Value / Mortgage Balance Dialog */}
+      <Dialog open={editDialogOpen} onClose={() => setEditDialogOpen(false)}>
+        <DialogTitle>Update Property Values</DialogTitle>
+        <DialogContent>
+          <TextField
+            label="Current Market Value"
+            type="number"
+            fullWidth
+            margin="normal"
+            value={editValues.currentMarketValue}
+            onChange={(e) => setEditValues({ ...editValues, currentMarketValue: e.target.value })}
+          />
+          <TextField
+            label="Current Mortgage Balance"
+            type="number"
+            fullWidth
+            margin="normal"
+            value={editValues.currentMortgageBal}
+            onChange={(e) => setEditValues({ ...editValues, currentMortgageBal: e.target.value })}
+          />
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setEditDialogOpen(false)}>Cancel</Button>
+          <Button
+            variant="contained"
+            onClick={async () => {
+              try {
+                const prop = properties.find(p => p.id === editValues.propertyId);
+                await axios.put(`${config.apiUrl}/api/properties/${editValues.propertyId}`, {
+                  name: prop.name, address: prop.address, type: prop.type, units: prop.units,
+                  currentMarketValue: parseFloat(editValues.currentMarketValue),
+                  currentMortgageBal: parseFloat(editValues.currentMortgageBal),
+                });
+                const res = await axios.get(`${config.apiUrl}/api/dashboard/investment-stats`);
+                setInvestmentStats(res.data);
+                setEditDialogOpen(false);
+              } catch (err) {
+                console.error('Error updating:', err);
+              }
+            }}
+          >
+            Save
+          </Button>
+        </DialogActions>
+      </Dialog>
 
       {/* Monthly Payments Section */}
       <Box sx={{ mt: 4 }}>

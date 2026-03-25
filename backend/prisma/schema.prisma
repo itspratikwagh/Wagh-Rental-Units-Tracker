@@ -35,15 +35,23 @@ model Payment {
 }
 
 model Property {
-  id        String    @id @default(uuid())
-  name      String
-  address   String
-  type      String
-  units     Int
-  createdAt DateTime  @default(now())
-  updatedAt DateTime
-  Expense   Expense[]
-  Tenant    Tenant[]
+  id                 String    @id @default(uuid())
+  name               String
+  address            String
+  type               String
+  units              Int
+  purchasePrice      Float?
+  purchaseDate       DateTime?
+  downPaymentPct     Float?
+  closingCosts       Float?
+  originalMortgage   Float?
+  mortgageRate       Float?
+  currentMortgageBal Float?
+  currentMarketValue Float?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime
+  Expense            Expense[]
+  Tenant             Tenant[]
 }
 
 model Tenant {

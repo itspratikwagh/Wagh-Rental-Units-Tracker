@@ -105,10 +105,12 @@ app.delete('/api/properties/:id', async (req, res) => {
 // Update a property
 app.put('/api/properties/:id', async (req, res) => {
   try {
-    // Extract only the property fields we want to update
-    const { name, address, type, units } = req.body;
-    
-    // Convert string values to numbers where needed
+    // Extract property fields to update
+    const { name, address, type, units,
+            purchasePrice, purchaseDate, downPaymentPct, closingCosts,
+            originalMortgage, mortgageRate, currentMortgageBal, currentMarketValue
+          } = req.body;
+
     const updateData = {
       name,
       address,
@@ -116,7 +118,15 @@ app.put('/api/properties/:id', async (req, res) => {
       units: parseInt(units, 10),
     };
 
-    console.log('Updating property with data:', updateData);
+    // Investment fields — only include if provided (so existing forms still work)
+    if (purchasePrice !== undefined) updateData.purchasePrice = parseFloat(purchasePrice);
+    if (purchaseDate !== undefined) updateData.purchaseDate = new Date(purchaseDate);
+    if (downPaymentPct !== undefined) updateData.downPaymentPct = parseFloat(downPaymentPct);
+    if (closingCosts !== undefined) updateData.closingCosts = parseFloat(closingCosts);
+    if (originalMortgage !== undefined) updateData.originalMortgage = parseFloat(originalMortgage);
+    if (mortgageRate !== undefined) updateData.mortgageRate = parseFloat(mortgageRate);
+    if (currentMortgageBal !== undefined) updateData.currentMortgageBal = parseFloat(currentMortgageBal);
+    if (currentMarketValue !== undefined) updateData.currentMarketValue = parseFloat(currentMarketValue);
 
     const property = await prisma.property.update({
       where: { id: req.params.id },
@@ -628,6 +638,125 @@ cron.schedule('0 0 * * *', async () => {
     }
   } catch (err) {
     console.error('[Cron] Recurring expenses error:', err.message);
+  }
+});
+
+// --- Investment Stats API ---
+
+app.get('/api/dashboard/investment-stats', async (req, res) => {
+  try {
+    const properties = await prisma.property.findMany({
+      include: { Tenant: true, Expense: true },
+    });
+    const payments = await prisma.payment.findMany({
+      include: { Tenant: true },
+    });
+
+    const stats = properties
+      .filter(p => p.purchasePrice) // only properties with investment data
+      .map(property => {
+        const now = new Date();
+        const purchaseDate = new Date(property.purchaseDate);
+        const yearsHeld = (now - purchaseDate) / (1000 * 60 * 60 * 24 * 365.25);
+
+        const downPayment = property.purchasePrice * (property.downPaymentPct / 100);
+        const closingCosts = property.closingCosts || property.purchasePrice * 0.03;
+        const totalCashInvested = downPayment + closingCosts;
+
+        // Total income: payments to tenants of this property
+        const propertyTenantIds = property.Tenant.map(t => t.id);
+        const totalIncome = payments
+          .filter(p => propertyTenantIds.includes(p.tenantId))
+          .reduce((sum, p) => sum + p.amount, 0);
+
+        // Total expenses
+        const totalExpenses = property.Expense.reduce((sum, e) => sum + e.amount, 0);
+
+        const totalCashFlow = totalIncome - totalExpenses;
+        const appreciation = (property.currentMarketValue || property.purchasePrice) - property.purchasePrice;
+        const equityFromMortgage = (property.originalMortgage || 0) - (property.currentMortgageBal || 0);
+        const totalEquity = (property.currentMarketValue || property.purchasePrice) - (property.currentMortgageBal || 0);
+
+        const totalReturn = appreciation + equityFromMortgage + totalCashFlow;
+        const totalROI = totalCashInvested > 0 ? (totalReturn / totalCashInvested) * 100 : 0;
+        const annualizedROI = yearsHeld > 0
+          ? (Math.pow(1 + totalReturn / totalCashInvested, 1 / yearsHeld) - 1) * 100
+          : 0;
+        const annualCashFlow = yearsHeld > 0 ? totalCashFlow / yearsHeld : 0;
+        const cashOnCash = totalCashInvested > 0 ? (annualCashFlow / totalCashInvested) * 100 : 0;
+
+        // Cap Rate = Annual NOI / Current Market Value
+        // NOI = income - operating expenses (excluding mortgage)
+        const mortgageExpenses = property.Expense
+          .filter(e => e.category === 'Mortgage')
+          .reduce((sum, e) => sum + e.amount, 0);
+        const operatingExpenses = totalExpenses - mortgageExpenses;
+        const annualNOI = yearsHeld > 0 ? (totalIncome - operatingExpenses) / yearsHeld : 0;
+        const capRate = property.currentMarketValue > 0
+          ? (annualNOI / property.currentMarketValue) * 100 : 0;
+
+        const equityMultiple = totalCashInvested > 0
+          ? (totalCashInvested + totalReturn) / totalCashInvested : 0;
+
+        return {
+          propertyId: property.id,
+          propertyName: property.name,
+          purchasePrice: property.purchasePrice,
+          purchaseDate: property.purchaseDate,
+          downPayment: Math.round(downPayment),
+          closingCosts: Math.round(closingCosts),
+          totalCashInvested: Math.round(totalCashInvested),
+          currentMarketValue: property.currentMarketValue,
+          originalMortgage: property.originalMortgage,
+          currentMortgageBal: property.currentMortgageBal,
+          mortgageRate: property.mortgageRate,
+          equityFromMortgage: Math.round(equityFromMortgage),
+          totalEquity: Math.round(totalEquity),
+          appreciation: Math.round(appreciation),
+          totalIncome: Math.round(totalIncome),
+          totalExpenses: Math.round(totalExpenses),
+          totalCashFlow: Math.round(totalCashFlow),
+          yearsHeld: Math.round(yearsHeld * 10) / 10,
+          totalReturn: Math.round(totalReturn),
+          totalROI: Math.round(totalROI * 10) / 10,
+          annualizedROI: Math.round(annualizedROI * 10) / 10,
+          cashOnCash: Math.round(cashOnCash * 10) / 10,
+          capRate: Math.round(capRate * 10) / 10,
+          equityMultiple: Math.round(equityMultiple * 100) / 100,
+        };
+      });
+
+    // Combined portfolio
+    const portfolio = stats.reduce(
+      (acc, s) => ({
+        totalCashInvested: acc.totalCashInvested + s.totalCashInvested,
+        totalMarketValue: acc.totalMarketValue + (s.currentMarketValue || 0),
+        totalMortgageBal: acc.totalMortgageBal + (s.currentMortgageBal || 0),
+        totalAppreciation: acc.totalAppreciation + s.appreciation,
+        totalEquityFromMortgage: acc.totalEquityFromMortgage + s.equityFromMortgage,
+        totalCashFlow: acc.totalCashFlow + s.totalCashFlow,
+        totalIncome: acc.totalIncome + s.totalIncome,
+        totalExpenses: acc.totalExpenses + s.totalExpenses,
+        totalEquity: acc.totalEquity + s.totalEquity,
+      }),
+      {
+        totalCashInvested: 0, totalMarketValue: 0, totalMortgageBal: 0,
+        totalAppreciation: 0, totalEquityFromMortgage: 0, totalCashFlow: 0,
+        totalIncome: 0, totalExpenses: 0, totalEquity: 0,
+      }
+    );
+
+    const portfolioReturn = portfolio.totalAppreciation + portfolio.totalEquityFromMortgage + portfolio.totalCashFlow;
+    portfolio.totalReturn = Math.round(portfolioReturn);
+    portfolio.totalROI = portfolio.totalCashInvested > 0
+      ? Math.round((portfolioReturn / portfolio.totalCashInvested) * 1000) / 10 : 0;
+    portfolio.equityMultiple = portfolio.totalCashInvested > 0
+      ? Math.round(((portfolio.totalCashInvested + portfolioReturn) / portfolio.totalCashInvested) * 100) / 100 : 0;
+
+    res.json({ properties: stats, portfolio });
+  } catch (error) {
+    console.error('Error computing investment stats:', error);
+    res.status(500).json({ error: error.message });
   }
 });
 
