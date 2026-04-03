@@ -1,5 +1,5 @@
 const Anthropic = require('@anthropic-ai/sdk');
-const { getGmailClient, decodeBody, getHtmlBody } = require('./gmail');
+const { getGmailClient, decodeBody, getHtmlBody, scanGmail } = require('./gmail');
 
 let anthropicClient = null;
 
@@ -376,7 +376,10 @@ async function createPendingTransactions(prisma, transactions, emailMap) {
   return results;
 }
 
-// Main AI-powered scan function
+// Main hybrid scan function:
+// 1. Run keyword matchers FIRST for known email types (Interac, utilities, Amazon)
+//    — these are 100% reliable and never miss
+// 2. Then run AI scanner for everything else (catches new/unknown email types)
 async function scanGmailWithAI(prisma, options = {}) {
   const syncState = await prisma.gmailSyncState.findFirst();
   if (!syncState?.refreshToken) {
@@ -401,6 +404,29 @@ async function scanGmailWithAI(prisma, options = {}) {
     throw err;
   }
 
+  // ============================================================
+  // PHASE 1: Keyword matchers for known email types
+  // ============================================================
+  console.log('Phase 1: Running keyword matchers...');
+  let keywordResults;
+  try {
+    // scanGmail uses its own afterClause logic internally but does NOT update lastSyncAt
+    // We temporarily prevent it from updating lastSyncAt by passing options
+    keywordResults = await scanGmail(prisma, {
+      ...options,
+      skipSyncUpdate: true, // we'll update lastSyncAt at the end
+    });
+    console.log(`Keyword matchers found: ${keywordResults.interac} Interac, ${keywordResults.outgoing_interac || 0} outgoing, ${keywordResults.utility} utility, ${keywordResults.amazon} Amazon`);
+  } catch (err) {
+    console.error('Keyword matcher phase failed:', err.message);
+    keywordResults = { interac: 0, outgoing_interac: 0, utility: 0, amazon: 0, errors: [err.message] };
+  }
+
+  // ============================================================
+  // PHASE 2: AI scanner for remaining emails
+  // ============================================================
+  console.log('Phase 2: Running AI scanner for remaining emails...');
+
   // Build date filter
   let afterClause = 'newer_than:14d';
   if (syncState.lastSyncAt) {
@@ -416,7 +442,8 @@ async function scanGmailWithAI(prisma, options = {}) {
 
   const maxResults = options.maxResults || 100;
 
-  // Step 1: Fetch all new email IDs
+  // Fetch all new email IDs (keyword matchers already created pendingTransactions,
+  // so those gmailMessageIds will be filtered out as duplicates here)
   const { newIds: newMessageIds, skippedIds, totalFetched } = await fetchRecentEmails(gmail, prisma, afterClause, maxResults);
 
   // Fetch subjects of skipped emails for the scan log (last 10)
@@ -438,85 +465,86 @@ async function scanGmailWithAI(prisma, options = {}) {
     } catch (e) { /* skip */ }
   }
 
-  if (newMessageIds.length === 0) {
-    await prisma.gmailSyncState.update({
-      where: { id: syncState.id },
-      data: { lastSyncAt: new Date() },
-    });
-    return {
-      payments: 0, expenses: 0, total: 0, errors: [],
-      scanLog: {
-        totalFetched,
-        newEmails: 0,
-        skippedDuplicates: skippedIds.length,
-        skippedSamples: skippedSummary,
-      },
-    };
-  }
+  const aiResults = { payments: 0, expenses: 0, autoRejected: 0, errors: [] };
 
-  console.log(`Found ${newMessageIds.length} new emails to analyze (${skippedIds.length} skipped as duplicates)`);
+  if (newMessageIds.length > 0) {
+    console.log(`AI scanner: ${newMessageIds.length} new emails to analyze (${skippedIds.length} already processed)`);
 
-  // Step 2: Build context
-  const { propertyList, tenantList } = await buildScanContext(prisma);
-  const systemPrompt = buildSystemPrompt(propertyList, tenantList);
+    // Build context and process in batches
+    const { propertyList, tenantList } = await buildScanContext(prisma);
+    const systemPrompt = buildSystemPrompt(propertyList, tenantList);
+    const emailMap = new Map();
 
-  // Step 3: Process in batches
-  const totalResults = { payments: 0, expenses: 0, errors: [] };
-  const emailMap = new Map();
+    for (let i = 0; i < newMessageIds.length; i += BATCH_SIZE) {
+      const batchIds = newMessageIds.slice(i, i + BATCH_SIZE);
 
-  for (let i = 0; i < newMessageIds.length; i += BATCH_SIZE) {
-    const batchIds = newMessageIds.slice(i, i + BATCH_SIZE);
+      try {
+        const emails = await fetchEmailBatch(gmail, batchIds);
+        for (const e of emails) {
+          emailMap.set(e.gmailMessageId, e);
+        }
 
-    try {
-      // Fetch email content
-      const emails = await fetchEmailBatch(gmail, batchIds);
+        if (emails.length === 0) continue;
 
-      // Store in map for snippet lookup later
-      for (const e of emails) {
-        emailMap.set(e.gmailMessageId, e);
+        const transactions = await analyzeWithClaude(emails, systemPrompt);
+
+        if (!Array.isArray(transactions)) {
+          aiResults.errors.push(`Batch ${i / BATCH_SIZE + 1}: Claude returned non-array response`);
+          continue;
+        }
+
+        const batchResults = await createPendingTransactions(prisma, transactions, emailMap);
+        aiResults.payments += batchResults.payments;
+        aiResults.expenses += batchResults.expenses;
+        aiResults.autoRejected += batchResults.autoRejected || 0;
+        aiResults.errors.push(...batchResults.errors);
+      } catch (err) {
+        aiResults.errors.push(`Batch ${i / BATCH_SIZE + 1}: ${err.message}`);
+        console.error(`Batch ${i / BATCH_SIZE + 1} failed:`, err);
       }
-
-      if (emails.length === 0) continue;
-
-      // Analyze with Claude
-      const transactions = await analyzeWithClaude(emails, systemPrompt);
-
-      if (!Array.isArray(transactions)) {
-        totalResults.errors.push(`Batch ${i / BATCH_SIZE + 1}: Claude returned non-array response`);
-        continue;
-      }
-
-      // Create records
-      const batchResults = await createPendingTransactions(prisma, transactions, emailMap);
-      totalResults.payments += batchResults.payments;
-      totalResults.expenses += batchResults.expenses;
-      totalResults.errors.push(...batchResults.errors);
-    } catch (err) {
-      totalResults.errors.push(`Batch ${i / BATCH_SIZE + 1}: ${err.message}`);
-      console.error(`Batch ${i / BATCH_SIZE + 1} failed:`, err);
     }
   }
 
-  // Update sync state
+  // ============================================================
+  // Update sync state (once, at the end)
+  // ============================================================
   await prisma.gmailSyncState.update({
     where: { id: syncState.id },
     data: { lastSyncAt: new Date() },
   });
 
-  totalResults.total = totalResults.payments + totalResults.expenses;
+  // Combine results
+  const totalPayments = (keywordResults.interac || 0) + aiResults.payments;
+  const totalExpenses = (keywordResults.outgoing_interac || 0) + (keywordResults.utility || 0) + (keywordResults.amazon || 0) + aiResults.expenses;
+  const allErrors = [...(keywordResults.errors || []), ...aiResults.errors];
 
-  if (totalResults.errors.length > 0) {
-    console.error('Scan errors:', totalResults.errors);
+  if (allErrors.length > 0) {
+    console.error('Scan errors:', allErrors);
   }
 
-  totalResults.scanLog = {
-    totalFetched,
-    newEmails: newMessageIds.length,
-    skippedDuplicates: skippedIds.length,
-    skippedSamples: skippedSummary,
+  return {
+    payments: totalPayments,
+    expenses: totalExpenses,
+    total: totalPayments + totalExpenses,
+    autoRejected: aiResults.autoRejected,
+    errors: allErrors,
+    scanLog: {
+      totalFetched,
+      newEmails: newMessageIds.length,
+      skippedDuplicates: skippedIds.length,
+      skippedSamples: skippedSummary,
+      keywordResults: {
+        interac: keywordResults.interac || 0,
+        outgoing_interac: keywordResults.outgoing_interac || 0,
+        utility: keywordResults.utility || 0,
+        amazon: keywordResults.amazon || 0,
+      },
+      aiResults: {
+        payments: aiResults.payments,
+        expenses: aiResults.expenses,
+      },
+    },
   };
-
-  return totalResults;
 }
 
 module.exports = { scanGmailWithAI, findExistingInDB };

@@ -720,11 +720,13 @@ async function scanGmail(prisma, options = {}) {
     }
   }
 
-  // Update sync state
-  await prisma.gmailSyncState.update({
-    where: { id: syncState.id },
-    data: { lastSyncAt: new Date() },
-  });
+  // Update sync state (unless called as part of hybrid scan)
+  if (!options.skipSyncUpdate) {
+    await prisma.gmailSyncState.update({
+      where: { id: syncState.id },
+      data: { lastSyncAt: new Date() },
+    });
+  }
 
   return results;
 }
