@@ -147,10 +147,42 @@ async function getPickupsForDate(placeId, targetDate, serviceId = CALGARY_SERVIC
   return merged;
 }
 
+/**
+ * Search ReCollect for addresses matching a free-text query. Returns the raw
+ * list of place matches, each with an `id` (UUID place_id you plug into
+ * GARBAGE_REMINDER_ADDRESSES), a `name` (formatted address), and optionally
+ * the services available at that place.
+ *
+ * This hits the public place-suggest endpoint that Calgary's own waste page
+ * uses under the hood. Useful as a one-time lookup — you don't need this at
+ * runtime, only when first configuring the bot.
+ *
+ * @param {string} query  e.g. "88 Sandstone Rd NW Calgary"
+ * @returns {Promise<Array<{ id: string, name: string, [key: string]: any }>>}
+ */
+async function searchPlace(query) {
+  if (!query) throw new Error('reCollect: query is required');
+  const url =
+    `https://api.recollect.net/api/places` +
+    `?suggest=${encodeURIComponent(query)}` +
+    `&locale=en-US&postal_code=&include_services=true&application=RecollectWidget`;
+  const res = await fetch(url, {
+    headers: {
+      'User-Agent': 'wagh-rental-tracker-garbage-reminder/1.0',
+      'Accept': 'application/json',
+    },
+  });
+  if (!res.ok) {
+    throw new Error(`reCollect: place search failed ${res.status} ${res.statusText}`);
+  }
+  return await res.json();
+}
+
 module.exports = {
   fetchIcsCalendar,
   parseIcsEvents,
   classifyBins,
   getPickupsForDate,
+  searchPlace,
   CALGARY_SERVICE_ID,
 };
