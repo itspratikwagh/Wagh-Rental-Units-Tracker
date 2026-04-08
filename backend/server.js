@@ -609,6 +609,20 @@ app.put('/api/expenses/:id', async (req, res) => {
 app.use('/api/gmail', gmailRoutes);
 app.use('/api/chat', chatRoutes);
 
+// Manual trigger for the garbage reminder — useful for testing the pipeline
+// without waiting for the nightly cron. Returns whatever the reminder check
+// produced so you can see what was sent / skipped / errored.
+app.post('/api/garbage-reminder/run', async (req, res) => {
+  try {
+    const { runReminderCheck } = require('./services/garbageReminder');
+    const results = await runReminderCheck();
+    res.json(results);
+  } catch (error) {
+    console.error('Garbage reminder trigger error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Health check
 app.get('/health', (req, res) => {
   res.json({ status: 'ok' });
@@ -640,6 +654,26 @@ cron.schedule('0 0 * * *', async () => {
     console.error('[Cron] Recurring expenses error:', err.message);
   }
 });
+
+// Garbage reminder — runs every evening in Calgary time. The reminder service
+// checks tomorrow's pickup for each configured address and only sends a
+// WhatsApp message if at least one cart is actually due. Guarded by
+// GARBAGE_REMINDER_ENABLED so the existing deploy is unaffected until opted in.
+const garbageReminderTz = process.env.GARBAGE_REMINDER_TIMEZONE || 'America/Edmonton';
+const garbageReminderCron = process.env.GARBAGE_REMINDER_CRON || '0 19 * * *';
+cron.schedule(garbageReminderCron, async () => {
+  if (process.env.GARBAGE_REMINDER_ENABLED !== 'true') return;
+  try {
+    const { runReminderCheck } = require('./services/garbageReminder');
+    const results = await runReminderCheck();
+    console.log(
+      `[Cron] Garbage reminder: checked=${results.checked} sent=${results.sent} ` +
+      `skipped=${results.skipped} errors=${results.errors.length}`
+    );
+  } catch (err) {
+    console.error('[Cron] Garbage reminder error:', err.message);
+  }
+}, { timezone: garbageReminderTz });
 
 // --- Investment Stats API ---
 

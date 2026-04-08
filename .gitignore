@@ -44,6 +44,10 @@ database-backups/
 backend/node_modules/
 backend/.env
 
+# whatsapp-web.js session state (contains auth tokens — never commit)
+backend/.wwebjs_auth/
+backend/.wwebjs_cache/
+
 # Frontend specific
 frontend/node_modules/
 frontend/.env
