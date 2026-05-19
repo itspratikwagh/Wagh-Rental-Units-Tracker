@@ -9,20 +9,7 @@ import {
   TextField,
   MenuItem,
 } from '@mui/material';
-
-const EXPENSE_CATEGORIES = [
-  'Airbnb',
-  'Home Improvement',
-  'Insurance',
-  'Internet Bills',
-  'Licenses & Permits',
-  'Maintenance',
-  'Mortgage',
-  'Property Management',
-  'Property Taxes',
-  'Utility Bills',
-  'Other'
-];
+import { EXPENSE_CATEGORIES } from '../../config';
 
 /**
  * Expense add/edit modal extracted from Expenses.jsx.

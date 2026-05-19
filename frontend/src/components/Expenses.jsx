@@ -40,23 +40,9 @@ import HomeIcon from '@mui/icons-material/Home';
 import DownloadIcon from '@mui/icons-material/Download';
 import CalendarTodayIcon from '@mui/icons-material/CalendarToday';
 import DateRangeIcon from '@mui/icons-material/DateRange';
-import config from '../config';
+import config, { EXPENSE_CATEGORIES } from '../config';
 import ExpenseModal from './expenses/ExpenseModal';
 import ConfirmDialog from './common/ConfirmDialog';
-
-const EXPENSE_CATEGORIES = [
-  'Airbnb',
-  'Home Improvement',
-  'Insurance',
-  'Internet Bills',
-  'Licenses & Permits',
-  'Maintenance',
-  'Mortgage',
-  'Property Management',
-  'Property Taxes',
-  'Utility Bills',
-  'Other'
-];
 
 const Expenses = () => {
   const [expenses, setExpenses] = useState([]);

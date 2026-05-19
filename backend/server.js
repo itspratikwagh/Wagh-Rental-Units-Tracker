@@ -41,9 +41,10 @@ app.use(express.json());
 app.get('/api/properties', async (req, res) => {
   try {
     const properties = await prisma.property.findMany({
+      where: { deletedAt: null },
       include: {
-        Tenant: true,
-        Expense: true,
+        Tenant: { where: { deletedAt: null } },
+        Expense: { where: { deletedAt: null } },
       },
     });
     res.json(properties);
@@ -74,11 +75,11 @@ app.post('/api/properties', async (req, res) => {
 // Get property by ID
 app.get('/api/properties/:id', async (req, res) => {
   try {
-    const property = await prisma.property.findUnique({
-      where: { id: req.params.id },
+    const property = await prisma.property.findFirst({
+      where: { id: req.params.id, deletedAt: null },
       include: {
-        Tenant: true,
-        Expense: true,
+        Tenant: { where: { deletedAt: null } },
+        Expense: { where: { deletedAt: null } },
       },
     });
     if (!property) {
@@ -90,11 +91,20 @@ app.get('/api/properties/:id', async (req, res) => {
   }
 });
 
-// Delete a property
+// Soft-delete a property (with cascade protection)
 app.delete('/api/properties/:id', async (req, res) => {
   try {
-    const property = await prisma.property.delete({
+    const activeTenants = await prisma.tenant.count({
+      where: { propertyId: req.params.id, deletedAt: null, isArchived: false },
+    });
+    if (activeTenants > 0) {
+      return res.status(400).json({
+        error: `Cannot delete property — it still has ${activeTenants} active tenant(s). Archive or remove them first.`,
+      });
+    }
+    await prisma.property.update({
       where: { id: req.params.id },
+      data: { deletedAt: new Date() },
     });
     res.json({ message: 'Property deleted successfully' });
   } catch (error) {
@@ -132,8 +142,8 @@ app.put('/api/properties/:id', async (req, res) => {
       where: { id: req.params.id },
       data: updateData,
       include: {
-        Tenant: true,
-        Expense: true,
+        Tenant: { where: { deletedAt: null } },
+        Expense: { where: { deletedAt: null } },
       },
     });
     res.json(property);
@@ -150,8 +160,10 @@ app.put('/api/properties/:id', async (req, res) => {
 app.get('/api/tenants', async (req, res) => {
   try {
     const { includeArchived } = req.query;
-    const where = includeArchived === 'true' ? { isArchived: true } : { isArchived: false };
-    
+    const where = includeArchived === 'true'
+      ? { isArchived: true, deletedAt: null }
+      : { isArchived: false, deletedAt: null };
+
     const tenants = await prisma.tenant.findMany({
       where,
       include: {
@@ -263,11 +275,12 @@ app.get('/api/tenants/:id', async (req, res) => {
   }
 });
 
-// Delete a tenant
+// Soft-delete a tenant
 app.delete('/api/tenants/:id', async (req, res) => {
   try {
-    const tenant = await prisma.tenant.delete({
+    await prisma.tenant.update({
       where: { id: req.params.id },
+      data: { deletedAt: new Date() },
     });
     res.json({ message: 'Tenant deleted successfully' });
   } catch (error) {
@@ -279,6 +292,7 @@ app.delete('/api/tenants/:id', async (req, res) => {
 app.get('/api/payments', async (req, res) => {
   try {
     const payments = await prisma.payment.findMany({
+      where: { deletedAt: null },
       include: {
         Tenant: true,
       },
@@ -356,11 +370,12 @@ app.post('/api/payments', async (req, res) => {
   }
 });
 
-// Delete a payment
+// Soft-delete a payment
 app.delete('/api/payments/:id', async (req, res) => {
   try {
-    const payment = await prisma.payment.delete({
+    await prisma.payment.update({
       where: { id: req.params.id },
+      data: { deletedAt: new Date() },
     });
     res.json({ message: 'Payment deleted successfully' });
   } catch (error) {
@@ -455,7 +470,7 @@ app.post('/api/payments/generate-pending', async (req, res) => {
     
     // Get all active tenants
     const activeTenants = await prisma.tenant.findMany({
-      where: { isArchived: false }
+      where: { isArchived: false, deletedAt: null }
     });
     
     if (activeTenants.length === 0) {
@@ -471,6 +486,7 @@ app.post('/api/payments/generate-pending', async (req, res) => {
     
     const existingPayments = await prisma.payment.findMany({
       where: {
+        deletedAt: null,
         date: {
           gte: startOfMonth,
           lte: endOfMonth
@@ -522,6 +538,7 @@ app.post('/api/payments/generate-pending', async (req, res) => {
 app.get('/api/expenses', async (req, res) => {
   try {
     const expenses = await prisma.expense.findMany({
+      where: { deletedAt: null },
       orderBy: {
         date: 'desc',
       },
@@ -563,8 +580,8 @@ app.post('/api/expenses', async (req, res) => {
 // Get expense by ID
 app.get('/api/expenses/:id', async (req, res) => {
   try {
-    const expense = await prisma.expense.findUnique({
-      where: { id: req.params.id },
+    const expense = await prisma.expense.findFirst({
+      where: { id: req.params.id, deletedAt: null },
     });
     if (!expense) {
       return res.status(404).json({ error: 'Expense not found' });
@@ -575,11 +592,12 @@ app.get('/api/expenses/:id', async (req, res) => {
   }
 });
 
-// Delete an expense
+// Soft-delete an expense
 app.delete('/api/expenses/:id', async (req, res) => {
   try {
-    const expense = await prisma.expense.delete({
+    await prisma.expense.update({
       where: { id: req.params.id },
+      data: { deletedAt: new Date() },
     });
     res.json({ message: 'Expense deleted successfully' });
   } catch (error) {
@@ -646,9 +664,14 @@ cron.schedule('0 0 * * *', async () => {
 app.get('/api/dashboard/investment-stats', async (req, res) => {
   try {
     const properties = await prisma.property.findMany({
-      include: { Tenant: true, Expense: true },
+      where: { deletedAt: null },
+      include: {
+        Tenant: { where: { deletedAt: null } },
+        Expense: { where: { deletedAt: null } },
+      },
     });
     const payments = await prisma.payment.findMany({
+      where: { deletedAt: null },
       include: { Tenant: true },
     });
 
@@ -766,10 +789,11 @@ app.get('/api/dashboard/investment-stats', async (req, res) => {
 app.get('/api/recurring-expenses', async (req, res) => {
   try {
     const templates = await prisma.recurringExpense.findMany({
+      where: { deletedAt: null },
       orderBy: { category: 'asc' },
     });
     // Attach property name
-    const properties = await prisma.property.findMany();
+    const properties = await prisma.property.findMany({ where: { deletedAt: null } });
     const propMap = Object.fromEntries(properties.map(p => [p.id, p]));
     const result = templates.map(t => ({
       ...t,
@@ -808,10 +832,13 @@ app.put('/api/recurring-expenses/:id', async (req, res) => {
   }
 });
 
-// Delete a recurring expense template
+// Soft-delete a recurring expense template
 app.delete('/api/recurring-expenses/:id', async (req, res) => {
   try {
-    await prisma.recurringExpense.delete({ where: { id: req.params.id } });
+    await prisma.recurringExpense.update({
+      where: { id: req.params.id },
+      data: { deletedAt: new Date() },
+    });
     res.json({ message: 'Deleted' });
   } catch (error) {
     res.status(500).json({ error: 'Failed to delete recurring expense' });

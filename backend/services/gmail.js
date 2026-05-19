@@ -222,8 +222,8 @@ const SENDER_ALIASES = {
 async function matchTenant(prisma, senderName) {
   if (!senderName) return { tenantId: null, confidence: 'none' };
 
-  // Search all tenants (including archived) for historical matching
-  const tenants = await prisma.tenant.findMany();
+  // Search all tenants (including archived but not soft-deleted) for historical matching
+  const tenants = await prisma.tenant.findMany({ where: { deletedAt: null } });
   let normalized = senderName.toLowerCase().trim();
 
   // Check alias map first
@@ -264,7 +264,7 @@ async function matchTenant(prisma, senderName) {
 
 // Map utility property key to actual property ID
 async function mapUtilityToProperty(prisma, propertyKey) {
-  const properties = await prisma.property.findMany();
+  const properties = await prisma.property.findMany({ where: { deletedAt: null } });
 
   // Try matching by name or address containing the city name
   const cityMap = { calgary: 'calgary', edmonton: 'edmonton' };

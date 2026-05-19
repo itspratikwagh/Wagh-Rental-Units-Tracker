@@ -16,8 +16,8 @@ const MAX_EMAILS = 500;
 // Build context about tenants and properties for Claude
 async function buildScanContext(prisma) {
   const [properties, tenants] = await Promise.all([
-    prisma.property.findMany(),
-    prisma.tenant.findMany({ include: { Property: true } }),
+    prisma.property.findMany({ where: { deletedAt: null } }),
+    prisma.tenant.findMany({ where: { deletedAt: null }, include: { Property: true } }),
   ]);
 
   const propertyList = properties.map(p => ({
@@ -264,6 +264,7 @@ async function findExistingInDB(prisma, tx) {
   if (tx.type === 'expense') {
     const expenses = await prisma.expense.findMany({
       where: {
+        deletedAt: null,
         date: {
           gte: new Date(txDate.getTime() - threeDaysMs),
           lte: new Date(txDate.getTime() + threeDaysMs),
@@ -279,6 +280,7 @@ async function findExistingInDB(prisma, tx) {
   if (tx.type === 'payment') {
     const payments = await prisma.payment.findMany({
       where: {
+        deletedAt: null,
         date: {
           gte: new Date(txDate.getTime() - threeDaysMs),
           lte: new Date(txDate.getTime() + threeDaysMs),

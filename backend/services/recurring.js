@@ -3,7 +3,7 @@
 
 async function generateRecurringExpenses(prisma) {
   const templates = await prisma.recurringExpense.findMany({
-    where: { isActive: true },
+    where: { isActive: true, deletedAt: null },
   });
 
   const now = new Date();
@@ -12,6 +12,7 @@ async function generateRecurringExpenses(prisma) {
 
   for (const t of templates) {
     try {
+      const prevCreated = created;
       const dueDates = getDueDates(t, now);
 
       for (const dueDate of dueDates) {
@@ -62,11 +63,12 @@ async function generateRecurringExpenses(prisma) {
         created++;
       }
 
-      // Update lastGenerated
-      await prisma.recurringExpense.update({
-        where: { id: t.id },
-        data: { lastGenerated: now },
-      });
+      if (created > prevCreated) {
+        await prisma.recurringExpense.update({
+          where: { id: t.id },
+          data: { lastGenerated: now },
+        });
+      }
     } catch (err) {
       errors.push(`${t.description}: ${err.message}`);
     }
@@ -96,14 +98,12 @@ function getDueDates(template, now) {
 
     // Generate all weekly dates up to now
     while (d <= now) {
-      dates.push(new Date(d));
+      dates.push(new Date(d.getFullYear(), d.getMonth(), d.getDate()));
       d.setDate(d.getDate() + 7);
     }
   } else if (template.frequency === 'monthly') {
     const targetDay = template.dayOfMonth || 1;
-    let d = new Date(start);
-    d.setDate(1); // go to start of month
-    d.setMonth(d.getMonth() + 1); // next month after lastGenerated
+    let d = new Date(start.getFullYear(), start.getMonth(), 1);
 
     while (d <= now) {
       const dueDate = new Date(d.getFullYear(), d.getMonth(), targetDay);

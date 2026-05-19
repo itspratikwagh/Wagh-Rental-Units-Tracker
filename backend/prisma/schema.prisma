@@ -8,30 +8,32 @@ datasource db {
 }
 
 model Expense {
-  id          String   @id @default(uuid())
+  id          String    @id @default(uuid())
   description String
   amount      Float
   date        DateTime
   category    String
   propertyId  String
   tenantId    String?
-  createdAt   DateTime @default(now())
+  createdAt   DateTime  @default(now())
   updatedAt   DateTime
-  Property    Property @relation(fields: [propertyId], references: [id])
-  Tenant      Tenant?  @relation(fields: [tenantId], references: [id])
+  deletedAt   DateTime?
+  Property    Property  @relation(fields: [propertyId], references: [id])
+  Tenant      Tenant?   @relation(fields: [tenantId], references: [id])
 }
 
 model Payment {
-  id            String   @id @default(uuid())
+  id            String    @id @default(uuid())
   tenantId      String
   amount        Float
   date          DateTime
   paymentMethod String
-  status        String   @default("completed")
+  status        String    @default("completed")
   notes         String?
-  createdAt     DateTime @default(now())
+  createdAt     DateTime  @default(now())
   updatedAt     DateTime
-  Tenant        Tenant   @relation(fields: [tenantId], references: [id])
+  deletedAt     DateTime?
+  Tenant        Tenant    @relation(fields: [tenantId], references: [id])
 }
 
 model Property {
@@ -50,6 +52,7 @@ model Property {
   currentMarketValue Float?
   createdAt          DateTime  @default(now())
   updatedAt          DateTime
+  deletedAt          DateTime?
   Expense            Expense[]
   Tenant             Tenant[]
 }
@@ -66,6 +69,7 @@ model Tenant {
   isArchived Boolean   @default(false)
   createdAt  DateTime  @default(now())
   updatedAt  DateTime
+  deletedAt  DateTime?
   Expense    Expense[]
   Payment    Payment[]
   Property   Property  @relation(fields: [propertyId], references: [id])
@@ -93,18 +97,19 @@ model PendingTransaction {
 }
 
 model RecurringExpense {
-  id          String   @id @default(uuid())
+  id          String    @id @default(uuid())
   description String
   amount      Float
   category    String
   propertyId  String
-  frequency   String   // "weekly", "monthly"
-  dayOfWeek   Int?     // 0=Sun..6=Sat (for weekly)
-  dayOfMonth  Int?     // 1-28 (for monthly)
-  isActive    Boolean  @default(true)
-  lastGenerated DateTime? // last date an expense was auto-created
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  frequency   String    // "weekly", "monthly"
+  dayOfWeek   Int?      // 0=Sun..6=Sat (for weekly)
+  dayOfMonth  Int?      // 1-28 (for monthly)
+  isActive    Boolean   @default(true)
+  lastGenerated DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  deletedAt   DateTime?
 }
 
 model GmailSyncState {

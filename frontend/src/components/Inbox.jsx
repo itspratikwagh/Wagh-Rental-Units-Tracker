@@ -10,7 +10,7 @@ import CancelIcon from '@mui/icons-material/Cancel';
 import EditIcon from '@mui/icons-material/Edit';
 import SyncIcon from '@mui/icons-material/Sync';
 import LinkIcon from '@mui/icons-material/Link';
-import config from '../config';
+import config, { EXPENSE_CATEGORIES } from '../config';
 
 const API = config.apiUrl;
 
@@ -338,7 +338,7 @@ export default function Inbox() {
                       label="Category"
                       onChange={(e) => setEditForm({ ...editForm, category: e.target.value })}
                     >
-                      {['Mortgage', 'Property Taxes', 'Utility Bills', 'Internet Bills', 'Home Improvement', 'Maintenance', 'Insurance', 'Other'].map(c => (
+                      {EXPENSE_CATEGORIES.map(c => (
                         <MenuItem key={c} value={c}>{c}</MenuItem>
                       ))}
                     </Select>

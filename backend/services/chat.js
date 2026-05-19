@@ -93,13 +93,15 @@ const TOOLS = [
 
 async function buildDataContext(prisma) {
   const [properties, tenants, payments, expenses] = await Promise.all([
-    prisma.property.findMany(),
-    prisma.tenant.findMany({ include: { Property: true } }),
+    prisma.property.findMany({ where: { deletedAt: null } }),
+    prisma.tenant.findMany({ where: { deletedAt: null }, include: { Property: true } }),
     prisma.payment.findMany({
+      where: { deletedAt: null },
       include: { Tenant: true },
       orderBy: { date: 'desc' },
     }),
     prisma.expense.findMany({
+      where: { deletedAt: null },
       orderBy: { date: 'desc' },
     }),
   ]);
@@ -172,7 +174,7 @@ async function executeAction(prisma, action) {
   switch (toolName) {
     case 'create_expense': {
       const property = await prisma.property.findFirst({
-        where: { name: { contains: input.propertyName, mode: 'insensitive' } },
+        where: { name: { contains: input.propertyName, mode: 'insensitive' }, deletedAt: null },
       });
       if (!property) throw new Error(`Property "${input.propertyName}" not found`);
 
@@ -191,7 +193,7 @@ async function executeAction(prisma, action) {
 
     case 'create_payment': {
       const tenant = await prisma.tenant.findFirst({
-        where: { name: { contains: input.tenantName, mode: 'insensitive' } },
+        where: { name: { contains: input.tenantName, mode: 'insensitive' }, deletedAt: null },
       });
       if (!tenant) throw new Error(`Tenant "${input.tenantName}" not found`);
 
@@ -211,7 +213,7 @@ async function executeAction(prisma, action) {
 
     case 'update_tenant': {
       const tenant = await prisma.tenant.findFirst({
-        where: { name: { contains: input.tenantName, mode: 'insensitive' } },
+        where: { name: { contains: input.tenantName, mode: 'insensitive' }, deletedAt: null },
       });
       if (!tenant) throw new Error(`Tenant "${input.tenantName}" not found`);
 
@@ -232,7 +234,7 @@ async function executeAction(prisma, action) {
 
     case 'archive_tenant': {
       const tenant = await prisma.tenant.findFirst({
-        where: { name: { contains: input.tenantName, mode: 'insensitive' }, isArchived: false },
+        where: { name: { contains: input.tenantName, mode: 'insensitive' }, isArchived: false, deletedAt: null },
       });
       if (!tenant) throw new Error(`Active tenant "${input.tenantName}" not found`);
 

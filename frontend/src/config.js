@@ -1,3 +1,17 @@
+export const EXPENSE_CATEGORIES = [
+  'Airbnb',
+  'Home Improvement',
+  'Insurance',
+  'Internet Bills',
+  'Licenses & Permits',
+  'Maintenance',
+  'Mortgage',
+  'Property Management',
+  'Property Taxes',
+  'Utility Bills',
+  'Other',
+];
+
 const config = {
   apiUrl: import.meta.env.VITE_API_URL || (
     import.meta.env.MODE === 'production'
@@ -6,4 +20,4 @@ const config = {
   )
 };
 
-export default config; 
+export default config;
