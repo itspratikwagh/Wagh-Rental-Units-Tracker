@@ -71,8 +71,10 @@ module.exports = function (prisma) {
       if (req.body.afterDate) options.afterDate = req.body.afterDate;
       if (req.body.maxResults) options.maxResults = req.body.maxResults;
 
-      // Rescan mode: temporarily reset lastSyncAt so we go back further
+      // Rescan mode: temporarily reset lastSyncAt so we go back further,
+      // and pass flag so AI scanner clears ScannedEmail records too
       if (req.body.rescan) {
+        options.rescan = true;
         const syncState = await prisma.gmailSyncState.findFirst();
         if (syncState) {
           const thirtyDaysAgo = new Date();

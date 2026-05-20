@@ -129,12 +129,21 @@ async function fetchRecentEmails(gmail, prisma, afterClause, maxResults) {
     if (allMessageIds.length >= MAX_EMAILS) break;
   } while (pageToken);
 
-  // Deduplicate against already-processed emails
-  const existing = await prisma.pendingTransaction.findMany({
-    where: { gmailMessageId: { in: allMessageIds } },
-    select: { gmailMessageId: true },
-  });
-  const existingIds = new Set(existing.map(e => e.gmailMessageId));
+  // Deduplicate against already-processed emails (pending transactions + scanned emails)
+  const [existingPending, existingScanned] = await Promise.all([
+    prisma.pendingTransaction.findMany({
+      where: { gmailMessageId: { in: allMessageIds } },
+      select: { gmailMessageId: true },
+    }),
+    prisma.scannedEmail.findMany({
+      where: { gmailMessageId: { in: allMessageIds } },
+      select: { gmailMessageId: true },
+    }),
+  ]);
+  const existingIds = new Set([
+    ...existingPending.map(e => e.gmailMessageId),
+    ...existingScanned.map(e => e.gmailMessageId),
+  ]);
   const newIds = allMessageIds.filter(id => !existingIds.has(id));
   const skippedIds = allMessageIds.filter(id => existingIds.has(id));
 
@@ -444,6 +453,12 @@ async function scanGmailWithAI(prisma, options = {}) {
 
   const maxResults = options.maxResults || 100;
 
+  // If rescan requested, clear ScannedEmail entries so previously-dismissed emails are re-analyzed
+  if (options.rescan) {
+    const deleted = await prisma.scannedEmail.deleteMany({});
+    console.log(`Rescan mode: cleared ${deleted.count} scanned-email records`);
+  }
+
   // Fetch all new email IDs (keyword matchers already created pendingTransactions,
   // so those gmailMessageIds will be filtered out as duplicates here)
   const { newIds: newMessageIds, skippedIds, totalFetched } = await fetchRecentEmails(gmail, prisma, afterClause, maxResults);
@@ -494,6 +509,17 @@ async function scanGmailWithAI(prisma, options = {}) {
           aiResults.errors.push(`Batch ${i / BATCH_SIZE + 1}: Claude returned non-array response`);
           continue;
         }
+
+        // Record ALL emails in this batch as scanned (even ones Claude ignored)
+        await Promise.all(
+          emails.map(e =>
+            prisma.scannedEmail.upsert({
+              where: { gmailMessageId: e.gmailMessageId },
+              create: { gmailMessageId: e.gmailMessageId },
+              update: {},
+            })
+          )
+        );
 
         const batchResults = await createPendingTransactions(prisma, transactions, emailMap);
         aiResults.payments += batchResults.payments;
