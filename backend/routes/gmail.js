@@ -136,11 +136,12 @@ module.exports = function (prisma) {
       }
 
       const amount = overrides.amount != null ? parseFloat(overrides.amount) : pending.amount;
-      // For payments, use the rent month (1st of month) as the accounting date
+      const isAirbnb = (pending.senderName || '').toLowerCase().includes('airbnb');
+      // For rent payments, snap to 1st of rent month; for Airbnb payouts, keep actual date
       let date;
       if (overrides.date) {
         date = new Date(overrides.date);
-      } else if (pending.type === 'payment') {
+      } else if (pending.type === 'payment' && !isAirbnb) {
         date = getRentMonth(pending.date);
       } else {
         date = pending.date;
@@ -256,7 +257,10 @@ module.exports = function (prisma) {
       for (const pending of highConfidence) {
         try {
           const amount = pending.amount;
-          const date = pending.date;
+          const isAirbnb = (pending.senderName || '').toLowerCase().includes('airbnb');
+          const date = (pending.type === 'payment' && !isAirbnb)
+            ? getRentMonth(pending.date)
+            : pending.date;
 
           if (pending.type === 'payment' && pending.tenantId) {
             const monthStart = new Date(date.getFullYear(), date.getMonth(), 1);
