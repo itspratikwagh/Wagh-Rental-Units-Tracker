@@ -152,13 +152,23 @@ function parseOutgoingInteracEmail(headers, bodyText) {
   let recipientName = null;
   let amount = null;
 
+  // "Your $189.00 transfer to RACHAEL ROSS has been successfully deposited"
   const match = subject.match(/Your\s+\$?([\d,]+\.?\d*)\s+transfer\s+to\s+(.+?)\s+has been successfully deposited/i);
   if (match) {
     amount = parseFloat(match[1].replace(/,/g, ''));
     recipientName = match[2].trim();
   }
 
-  // Fallback: try body text
+  // "You've sent Oleksandr money"
+  if (!amount && bodyText) {
+    const sentMatch = bodyText.match(/You(?:'ve| have) sent \$?([\d,]+\.?\d*)\s+CAD to\s+(.+?)[\.\s]/i);
+    if (sentMatch) {
+      amount = parseFloat(sentMatch[1].replace(/,/g, ''));
+      recipientName = sentMatch[2].trim();
+    }
+  }
+
+  // Fallback: try body text for standard transfer format
   if (!amount && bodyText) {
     const bodyMatch = bodyText.match(/\$?([\d,]+\.?\d*)\s+transfer\s+to\s+(.+?)\s+has been/i);
     if (bodyMatch) {
@@ -183,7 +193,6 @@ const OUTGOING_INTERAC_SKIP = [
   /kraken/i,          // Crypto exchange
   /sandip\s+das/i,    // Personal loan
   /evelyn\s+ackah/i,  // Immigration lawyer
-  /xiujin\s+ju/i,     // Airbnb
 ];
 
 // Parse utility bill email
@@ -497,7 +506,7 @@ async function scanGmail(prisma, options = {}) {
 
   // Scan for outgoing Interac e-Transfers (expenses paid via e-Transfer)
   try {
-    const outgoingQuery = `from:payments.interac.ca subject:"Your" subject:"transfer to" ${afterClause} in:anywhere`;
+    const outgoingQuery = `from:payments.interac.ca (subject:"transfer to" OR subject:"sent" subject:"money") ${afterClause} in:anywhere`;
     let allOutgoingMessages = [];
     let outgoingPageToken = null;
 

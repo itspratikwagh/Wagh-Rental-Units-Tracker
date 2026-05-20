@@ -56,7 +56,7 @@ KNOWN SENDER ALIASES (sender name -> tenant name):
 
 CLASSIFICATION RULES:
 - Interac e-Transfer RECEIVED (incoming money, "You've received", from notify@payments.interac.ca) = PAYMENT (rent from tenant). Match sender to a tenant using name, email, or aliases above.
-- Interac e-Transfer SENT (outgoing money, "Your transfer to", from payments.interac.ca) = EXPENSE. Skip these known personal recipients: Kraken (crypto), Sandip Das (personal loan), Evelyn Ackah (lawyer), Xiujin Ju (Airbnb). Also skip if subject mentions "return" or "cancel".
+- Interac e-Transfer SENT (outgoing money, "Your transfer to" or "You've sent X money", from payments.interac.ca) = EXPENSE. Skip these known personal recipients: Kraken (crypto), Sandip Das (personal loan), Evelyn Ackah (lawyer). Outgoing transfers to Airbnb guests (refunds, partial refunds for early checkout) are legitimate property expenses — categorize as "Airbnb".
 - Utility bills (Enmax/Easymax, EPCOR, Shaw) = EXPENSE. Map Enmax to Calgary property, EPCOR to Edmonton property. Shaw: look for account numbers 099-0137-3821 (Edmonton) or 099-0203-0540 (Calgary).
 - Amazon.ca order confirmations = EXPENSE (Home Improvement category). Look for delivery city (Calgary or Edmonton) to map to property.
 - Insurance bills, mortgage statements, property tax notices = EXPENSE.
