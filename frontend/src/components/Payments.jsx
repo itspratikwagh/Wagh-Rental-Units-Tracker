@@ -283,21 +283,21 @@ const Payments = () => {
   // Calculate summary statistics
   const calculateSummaryStats = () => {
     const now = new Date();
-    const currentMonth = now.getMonth();
-    const currentYear = now.getFullYear();
+    const currentMonth = now.getUTCMonth();
+    const currentYear = now.getUTCFullYear();
 
-    // Filter payments by current month
+    // Filter payments by current month (UTC to match stored dates)
     const thisMonthPayments = payments.filter(payment => {
       const paymentDate = new Date(payment.date);
-      return paymentDate.getMonth() === currentMonth &&
-             paymentDate.getFullYear() === currentYear &&
+      return paymentDate.getUTCMonth() === currentMonth &&
+             paymentDate.getUTCFullYear() === currentYear &&
              (payment.status === 'completed' || payment.status === 'partial');
     });
 
     // Filter payments by current year
     const thisYearPayments = payments.filter(payment => {
       const paymentDate = new Date(payment.date);
-      return paymentDate.getFullYear() === currentYear &&
+      return paymentDate.getUTCFullYear() === currentYear &&
              (payment.status === 'completed' || payment.status === 'partial');
     });
 
