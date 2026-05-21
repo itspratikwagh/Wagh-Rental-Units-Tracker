@@ -221,131 +221,30 @@ function Dashboard() {
       <Typography variant="h4" gutterBottom>
         Dashboard
       </Typography>
-      <Grid container spacing={3}>
-        <Grid item xs={12} md={3}>
-          <Paper
-            sx={{
-              p: 2,
-              display: 'flex',
-              flexDirection: 'column',
-              height: 140,
-            }}
-          >
-            <Typography component="h2" variant="h6" color="primary" gutterBottom>
-              Total Properties
-            </Typography>
-            <Typography component="p" variant="h4">
-              {totalProperties}
-            </Typography>
-          </Paper>
-        </Grid>
-        <Grid item xs={12} md={3}>
-          <Paper
-            sx={{
-              p: 2,
-              display: 'flex',
-              flexDirection: 'column',
-              height: 140,
-            }}
-          >
-            <Typography component="h2" variant="h6" color="primary" gutterBottom>
-              Total Tenants
-            </Typography>
-            <Typography component="p" variant="h4">
-              {totalTenants}
-            </Typography>
-            {totalArchivedTenants > 0 && (
-              <Typography component="p" variant="body2" color="text.secondary">
-                + {totalArchivedTenants} archived
+      <Grid container spacing={2}>
+        {[
+          { label: 'Properties', value: totalProperties, color: '#2563eb', bg: '#eff6ff' },
+          { label: 'Tenants', value: totalTenants, sub: totalArchivedTenants > 0 ? `+ ${totalArchivedTenants} archived` : null, color: '#7c3aed', bg: '#f5f3ff' },
+          { label: 'Monthly Rent', value: `$${totalMonthlyRent.toLocaleString()}`, color: '#2563eb', bg: '#eff6ff' },
+          { label: 'Avg Monthly Expense', value: `$${Math.round(averageMonthlyExpense).toLocaleString()}`, color: '#dc2626', bg: '#fef2f2' },
+          { label: 'Total Payments', value: `$${totalPayments.toLocaleString(undefined, { minimumFractionDigits: 2 })}`, color: '#059669', bg: '#ecfdf5' },
+          { label: 'Total Expenses', value: `$${totalExpenses.toLocaleString(undefined, { minimumFractionDigits: 2 })}`, color: '#dc2626', bg: '#fef2f2' },
+          { label: 'Net Profit/Loss', value: `${totalProfitLoss >= 0 ? '' : '-'}$${Math.abs(totalProfitLoss).toLocaleString(undefined, { minimumFractionDigits: 2 })}`, color: totalProfitLoss >= 0 ? '#059669' : '#dc2626', bg: totalProfitLoss >= 0 ? '#ecfdf5' : '#fef2f2' },
+        ].map((card) => (
+          <Grid item xs={6} sm={4} md={12 / 7} key={card.label}>
+            <Paper sx={{ p: 2, height: 110, display: 'flex', flexDirection: 'column', justifyContent: 'center', borderLeft: `3px solid ${card.color}`, bgcolor: card.bg }}>
+              <Typography variant="caption" sx={{ fontWeight: 600, color: 'text.secondary', textTransform: 'uppercase', letterSpacing: '0.05em', fontSize: '0.65rem' }}>
+                {card.label}
               </Typography>
-            )}
-          </Paper>
-        </Grid>
-        <Grid item xs={12} md={3}>
-          <Paper
-            sx={{
-              p: 2,
-              display: 'flex',
-              flexDirection: 'column',
-              height: 140,
-            }}
-          >
-            <Typography component="h2" variant="h6" color="primary" gutterBottom>
-              Monthly Rent Income
-            </Typography>
-            <Typography component="p" variant="h4">
-              ${totalMonthlyRent.toFixed(2)}
-            </Typography>
-          </Paper>
-        </Grid>
-        <Grid item xs={12} md={3}>
-          <Paper
-            sx={{
-              p: 2,
-              display: 'flex',
-              flexDirection: 'column',
-              height: 140,
-            }}
-          >
-            <Typography component="h2" variant="h6" color="error" gutterBottom>
-              Average Monthly Expense
-            </Typography>
-            <Typography component="p" variant="h4" color="error">
-              ${averageMonthlyExpense.toFixed(2)}
-            </Typography>
-          </Paper>
-        </Grid>
-        <Grid item xs={12} md={3}>
-          <Paper
-            sx={{
-              p: 2,
-              display: 'flex',
-              flexDirection: 'column',
-              height: 140,
-            }}
-          >
-            <Typography component="h2" variant="h6" color="primary" gutterBottom>
-              Total Payments Received
-            </Typography>
-            <Typography component="p" variant="h4">
-              ${totalPayments.toFixed(2)}
-            </Typography>
-          </Paper>
-        </Grid>
-        <Grid item xs={12} md={3}>
-          <Paper
-            sx={{
-              p: 2,
-              display: 'flex',
-              flexDirection: 'column',
-              height: 140,
-            }}
-          >
-            <Typography component="h2" variant="h6" color="error" gutterBottom>
-              Total Expenses
-            </Typography>
-            <Typography component="p" variant="h4" color="error">
-              ${totalExpenses.toFixed(2)}
-            </Typography>
-          </Paper>
-        </Grid>
-        <Grid item xs={12} md={3}>
-          <Paper
-            sx={{
-              p: 2,
-              display: 'flex',
-              flexDirection: 'column',
-              height: 140,
-            }}
-          >
-            <Typography component="h2" variant="h6" color={totalProfitLoss >= 0 ? "success.main" : "error"} gutterBottom>
-              Total Profit/Loss
-            </Typography>
-            <Typography component="p" variant="h4" color={totalProfitLoss >= 0 ? "success.main" : "error"}>
-              ${totalProfitLoss.toFixed(2)}
-            </Typography>
-          </Paper>
-        </Grid>
+              <Typography variant="h5" sx={{ fontWeight: 700, color: card.color, mt: 0.5 }}>
+                {card.value}
+              </Typography>
+              {card.sub && (
+                <Typography variant="caption" color="text.secondary">{card.sub}</Typography>
+              )}
+            </Paper>
+          </Grid>
+        ))}
       </Grid>
 
       {/* Investment Returns Section */}
@@ -623,138 +522,47 @@ function Dashboard() {
         </Box>
       )}
 
-      {/* Monthly Payments Section */}
+      {/* Monthly Profit/Loss Section */}
       <Box sx={{ mt: 4 }}>
         <Typography variant="h5" gutterBottom>
-          Monthly Payment Totals
+          Monthly Profit / Loss
         </Typography>
-        <Paper sx={{ p: 2 }}>
-          {sortedMonths.length > 0 ? (
-            <Grid container spacing={2}>
-              {sortedMonths.map(([monthYear, amount]) => {
+        <TableContainer component={Paper}>
+          <Table size="small">
+            <TableHead>
+              <TableRow>
+                <TableCell>Month</TableCell>
+                <TableCell align="right">Payments</TableCell>
+                <TableCell align="right">Expenses</TableCell>
+                <TableCell align="right">Net</TableCell>
+              </TableRow>
+            </TableHead>
+            <TableBody>
+              {sortedProfitMonths.map(([monthYear, net]) => {
                 const [month, year] = monthYear.split('/');
-                const monthName = new Date(year, month - 1).toLocaleString('default', { month: 'long' });
+                const monthName = new Date(year, month - 1).toLocaleString('default', { month: 'short' });
+                const pay = monthlyPayments[monthYear] || 0;
+                const exp = monthlyExpenses[monthYear] || 0;
+                const isProfit = net >= 0;
                 return (
-                  <Grid item xs={12} sm={6} md={4} key={monthYear}>
-                    <Paper
-                      sx={{
-                        p: 2,
-                        display: 'flex',
-                        flexDirection: 'column',
-                        alignItems: 'center',
-                        bgcolor: 'background.default',
-                      }}
-                    >
-                      <Typography variant="subtitle1" color="text.secondary">
-                        {monthName} {year}
-                      </Typography>
-                      <Typography variant="h6" color="primary">
-                        ${amount.toFixed(2)}
-                      </Typography>
-                    </Paper>
-                  </Grid>
+                  <TableRow
+                    key={monthYear}
+                    hover
+                    sx={{ cursor: 'pointer' }}
+                    onClick={() => handleMonthClick(monthYear)}
+                  >
+                    <TableCell sx={{ fontWeight: 500 }}>{monthName} {year}</TableCell>
+                    <TableCell align="right" sx={{ color: 'success.main' }}>${pay.toLocaleString(undefined, { minimumFractionDigits: 2 })}</TableCell>
+                    <TableCell align="right" sx={{ color: 'error.main' }}>${exp.toLocaleString(undefined, { minimumFractionDigits: 2 })}</TableCell>
+                    <TableCell align="right" sx={{ fontWeight: 700, color: isProfit ? 'success.main' : 'error.main' }}>
+                      {isProfit ? '+' : '-'}${Math.abs(net).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                    </TableCell>
+                  </TableRow>
                 );
               })}
-            </Grid>
-          ) : (
-            <Typography variant="body1" color="text.secondary">
-              No payment data available.
-            </Typography>
-          )}
-        </Paper>
-      </Box>
-
-      {/* Monthly Profits Section */}
-      <Box sx={{ mt: 4 }}>
-        <Typography variant="h5" gutterBottom>
-          Monthly Profit/Loss (Click to view details)
-        </Typography>
-        <Paper sx={{ p: 2 }}>
-          {sortedProfitMonths.length > 0 ? (
-            <Grid container spacing={2}>
-              {sortedProfitMonths.map(([monthYear, amount]) => {
-                const [month, year] = monthYear.split('/');
-                const monthName = new Date(year, month - 1).toLocaleString('default', { month: 'long' });
-                const isProfit = amount >= 0;
-                return (
-                  <Grid item xs={12} sm={6} md={4} key={monthYear}>
-                    <Paper
-                      sx={{
-                        p: 2,
-                        display: 'flex',
-                        flexDirection: 'column',
-                        alignItems: 'center',
-                        bgcolor: 'background.default',
-                        cursor: 'pointer',
-                        '&:hover': {
-                          bgcolor: 'action.hover',
-                          transform: 'scale(1.02)',
-                          transition: 'all 0.2s ease-in-out',
-                        },
-                      }}
-                      onClick={() => handleMonthClick(monthYear)}
-                    >
-                      <Typography variant="subtitle1" color="text.secondary">
-                        {monthName} {year}
-                      </Typography>
-                      <Typography variant="h6" color={isProfit ? "success.main" : "error"}>
-                        ${Math.abs(amount).toFixed(2)}
-                        <Typography component="span" variant="body2" color={isProfit ? "success.main" : "error"}>
-                          {' '}({isProfit ? 'Profit' : 'Loss'})
-                        </Typography>
-                      </Typography>
-                    </Paper>
-                  </Grid>
-                );
-              })}
-            </Grid>
-          ) : (
-            <Typography variant="body1" color="text.secondary">
-              No profit/loss data available.
-            </Typography>
-          )}
-        </Paper>
-      </Box>
-
-      {/* Monthly Expenses Section */}
-      <Box sx={{ mt: 4 }}>
-        <Typography variant="h5" gutterBottom>
-          Monthly Expense Totals
-        </Typography>
-        <Paper sx={{ p: 2 }}>
-          {sortedExpenseMonths.length > 0 ? (
-            <Grid container spacing={2}>
-              {sortedExpenseMonths.map(([monthYear, amount]) => {
-                const [month, year] = monthYear.split('/');
-                const monthName = new Date(year, month - 1).toLocaleString('default', { month: 'long' });
-                return (
-                  <Grid item xs={12} sm={6} md={4} key={monthYear}>
-                    <Paper
-                      sx={{
-                        p: 2,
-                        display: 'flex',
-                        flexDirection: 'column',
-                        alignItems: 'center',
-                        bgcolor: 'background.default',
-                      }}
-                    >
-                      <Typography variant="subtitle1" color="text.secondary">
-                        {monthName} {year}
-                      </Typography>
-                      <Typography variant="h6" color="error">
-                        ${amount.toFixed(2)}
-                      </Typography>
-                    </Paper>
-                  </Grid>
-                );
-              })}
-            </Grid>
-          ) : (
-            <Typography variant="body1" color="text.secondary">
-              No expense data available.
-            </Typography>
-          )}
-        </Paper>
+            </TableBody>
+          </Table>
+        </TableContainer>
       </Box>
 
       {/* Month Details Modal */}

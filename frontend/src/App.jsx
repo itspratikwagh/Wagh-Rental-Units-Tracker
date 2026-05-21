@@ -30,10 +30,94 @@ const theme = createTheme({
   palette: {
     mode: 'light',
     primary: {
-      main: '#1976d2',
+      main: '#2563eb',
+      light: '#60a5fa',
+      dark: '#1d4ed8',
     },
     secondary: {
-      main: '#dc004e',
+      main: '#7c3aed',
+    },
+    success: {
+      main: '#059669',
+      light: '#d1fae5',
+    },
+    error: {
+      main: '#dc2626',
+      light: '#fee2e2',
+    },
+    background: {
+      default: '#f8fafc',
+      paper: '#ffffff',
+    },
+    text: {
+      primary: '#1e293b',
+      secondary: '#64748b',
+    },
+  },
+  typography: {
+    fontFamily: '"Inter", "Roboto", "Helvetica", "Arial", sans-serif',
+    h4: { fontWeight: 700, letterSpacing: '-0.02em' },
+    h5: { fontWeight: 600, letterSpacing: '-0.01em' },
+    h6: { fontWeight: 600 },
+  },
+  shape: {
+    borderRadius: 12,
+  },
+  components: {
+    MuiPaper: {
+      defaultProps: { elevation: 0 },
+      styleOverrides: {
+        root: {
+          border: '1px solid #e2e8f0',
+          backgroundImage: 'none',
+        },
+      },
+    },
+    MuiAppBar: {
+      styleOverrides: {
+        root: {
+          backgroundImage: 'none',
+          boxShadow: '0 1px 3px 0 rgb(0 0 0 / 0.1)',
+        },
+      },
+    },
+    MuiButton: {
+      styleOverrides: {
+        root: {
+          textTransform: 'none',
+          fontWeight: 600,
+          borderRadius: 8,
+        },
+      },
+    },
+    MuiTableHead: {
+      styleOverrides: {
+        root: {
+          '& .MuiTableCell-head': {
+            fontWeight: 600,
+            color: '#475569',
+            backgroundColor: '#f8fafc',
+            borderBottom: '2px solid #e2e8f0',
+          },
+        },
+      },
+    },
+    MuiTableCell: {
+      styleOverrides: {
+        root: {
+          borderColor: '#f1f5f9',
+        },
+      },
+    },
+    MuiChip: {
+      styleOverrides: {
+        root: { fontWeight: 500 },
+      },
+    },
+    MuiTab: {
+      styleOverrides: {
+        root: { textTransform: 'none', fontWeight: 600 },
+      },
     },
   },
 });
@@ -74,7 +158,7 @@ function App() {
       <CssBaseline />
       <Router>
         <Box sx={{ display: 'flex', flexDirection: 'column', minHeight: '100vh' }}>
-          <AppBar position="static">
+          <AppBar position="sticky" sx={{ bgcolor: 'white', color: 'text.primary' }}>
             <Toolbar>
               {isMobile && (
                 <IconButton
@@ -87,13 +171,24 @@ function App() {
                   <MenuIcon />
                 </IconButton>
               )}
-              <Typography variant="h6" component="div" sx={{ flexGrow: 1 }}>
-                Wagh Rental Units Tracker
+              <Typography variant="h6" component="div" sx={{ flexGrow: 1, color: 'primary.main', fontWeight: 700 }}>
+                Wagh Rental Tracker
               </Typography>
               {!isMobile && (
-                <Box sx={{ display: 'flex', gap: 2 }}>
+                <Box sx={{ display: 'flex', gap: 0.5 }}>
                   {navLinks.map((link) => (
-                    <Link key={link.to} component={RouterLink} to={link.to} color="inherit">
+                    <Link
+                      key={link.to}
+                      component={RouterLink}
+                      to={link.to}
+                      underline="none"
+                      sx={{
+                        px: 1.5, py: 0.75, borderRadius: 2, fontSize: '0.875rem', fontWeight: 500,
+                        color: 'text.secondary',
+                        '&:hover': { bgcolor: 'primary.main', color: 'white' },
+                        transition: 'all 0.15s ease',
+                      }}
+                    >
                       {link.label}
                     </Link>
                   ))}
@@ -125,22 +220,16 @@ function App() {
             </Box>
           </Drawer>
 
-          <Container component="main" sx={{ mt: 4, mb: 4, flex: 1 }}>
-            <Grid container spacing={3}>
-              <Grid item xs={12}>
-                <Paper sx={{ p: 2 }}>
-                  <Routes>
-                    <Route path="/" element={<Dashboard />} />
-                    <Route path="/properties" element={<Properties />} />
-                    <Route path="/tenants" element={<Tenants />} />
-                    <Route path="/payments" element={<Payments />} />
-                    <Route path="/expenses" element={<Expenses />} />
-                    <Route path="/inbox" element={<Inbox />} />
-                    <Route path="/chat" element={<Chat />} />
-                  </Routes>
-                </Paper>
-              </Grid>
-            </Grid>
+          <Container component="main" maxWidth="xl" sx={{ mt: 3, mb: 4, flex: 1 }}>
+            <Routes>
+              <Route path="/" element={<Dashboard />} />
+              <Route path="/properties" element={<Properties />} />
+              <Route path="/tenants" element={<Tenants />} />
+              <Route path="/payments" element={<Payments />} />
+              <Route path="/expenses" element={<Expenses />} />
+              <Route path="/inbox" element={<Inbox />} />
+              <Route path="/chat" element={<Chat />} />
+            </Routes>
           </Container>
           <Box component="footer">
             <Container maxWidth="sm">
