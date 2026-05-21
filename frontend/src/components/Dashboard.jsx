@@ -46,20 +46,22 @@ function Dashboard() {
   const [investmentTab, setInvestmentTab] = useState(0);
   const [editDialogOpen, setEditDialogOpen] = useState(false);
   const [editValues, setEditValues] = useState({ propertyId: '', currentMarketValue: '', currentMortgageBal: '' });
+  const [airbnbPL, setAirbnbPL] = useState(null);
 
   useEffect(() => {
     const fetchData = async () => {
       try {
         // Fetch both active and archived tenants to get complete data
-        const [propertiesRes, activeTenantsRes, archivedTenantsRes, paymentsRes, expensesRes, investmentRes] = await Promise.all([
+        const [propertiesRes, activeTenantsRes, archivedTenantsRes, paymentsRes, expensesRes, investmentRes, airbnbRes] = await Promise.all([
           axios.get(`${config.apiUrl}/api/properties`),
           axios.get(`${config.apiUrl}/api/tenants`),
           axios.get(`${config.apiUrl}/api/tenants?includeArchived=true`),
           axios.get(`${config.apiUrl}/api/payments`),
           axios.get(`${config.apiUrl}/api/expenses`),
           axios.get(`${config.apiUrl}/api/dashboard/investment-stats`).catch(() => ({ data: null })),
+          axios.get(`${config.apiUrl}/api/dashboard/airbnb-pl`).catch(() => ({ data: null })),
         ]);
-        
+
         // Combine active and archived tenants, removing duplicates
         const activeTenants = activeTenantsRes.data;
         const archivedTenants = archivedTenantsRes.data;
@@ -77,6 +79,7 @@ function Dashboard() {
         setPayments(paymentsRes.data);
         setExpenses(expensesRes.data);
         if (investmentRes.data) setInvestmentStats(investmentRes.data);
+        if (airbnbRes.data) setAirbnbPL(airbnbRes.data);
       } catch (error) {
         console.error('Error fetching data:', error);
       } finally {
@@ -567,6 +570,58 @@ function Dashboard() {
           </Button>
         </DialogActions>
       </Dialog>
+
+      {/* Airbnb vs Long-Term Rent Section */}
+      {airbnbPL && airbnbPL.months.length > 0 && (
+        <Box sx={{ mt: 4 }}>
+          <Typography variant="h5" gutterBottom>
+            Airbnb vs Long-Term Rent
+          </Typography>
+          <TableContainer component={Paper}>
+            <Table size="small">
+              <TableHead>
+                <TableRow>
+                  <TableCell>Month</TableCell>
+                  <TableCell align="right">Airbnb Income</TableCell>
+                  <TableCell align="right">Airbnb Expenses</TableCell>
+                  <TableCell align="right">Long-Term Rent</TableCell>
+                  <TableCell align="right">Airbnb Advantage</TableCell>
+                </TableRow>
+              </TableHead>
+              <TableBody>
+                {airbnbPL.months.map((m) => (
+                  <TableRow key={m.month}>
+                    <TableCell>
+                      {new Date(m.month + '-01').toLocaleString('default', { month: 'long', year: 'numeric', timeZone: 'UTC' })}
+                    </TableCell>
+                    <TableCell align="right">${m.income.toLocaleString('en-CA', { minimumFractionDigits: 2 })}</TableCell>
+                    <TableCell align="right" sx={{ color: 'error.main' }}>
+                      ${m.expenses.toLocaleString('en-CA', { minimumFractionDigits: 2 })}
+                    </TableCell>
+                    <TableCell align="right">
+                      {m.longTermRent > 0 ? `$${m.longTermRent.toLocaleString('en-CA', { minimumFractionDigits: 2 })}` : '—'}
+                    </TableCell>
+                    <TableCell align="right" sx={{ color: m.advantage >= 0 ? 'success.main' : 'error.main', fontWeight: 600 }}>
+                      {m.advantage >= 0 ? '+' : '-'}${Math.abs(m.advantage).toLocaleString('en-CA', { minimumFractionDigits: 2 })}
+                    </TableCell>
+                  </TableRow>
+                ))}
+                <TableRow sx={{ '& td': { fontWeight: 700, borderTop: 2, borderColor: 'divider' } }}>
+                  <TableCell>Total</TableCell>
+                  <TableCell align="right">${airbnbPL.totals.income.toLocaleString('en-CA', { minimumFractionDigits: 2 })}</TableCell>
+                  <TableCell align="right" sx={{ color: 'error.main' }}>
+                    ${airbnbPL.totals.expenses.toLocaleString('en-CA', { minimumFractionDigits: 2 })}
+                  </TableCell>
+                  <TableCell align="right">${airbnbPL.totals.longTermRent.toLocaleString('en-CA', { minimumFractionDigits: 2 })}</TableCell>
+                  <TableCell align="right" sx={{ color: airbnbPL.totals.advantage >= 0 ? 'success.main' : 'error.main' }}>
+                    {airbnbPL.totals.advantage >= 0 ? '+' : '-'}${Math.abs(airbnbPL.totals.advantage).toLocaleString('en-CA', { minimumFractionDigits: 2 })}
+                  </TableCell>
+                </TableRow>
+              </TableBody>
+            </Table>
+          </TableContainer>
+        </Box>
+      )}
 
       {/* Monthly Payments Section */}
       <Box sx={{ mt: 4 }}>

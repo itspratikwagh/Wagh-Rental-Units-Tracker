@@ -783,6 +783,69 @@ app.get('/api/dashboard/investment-stats', async (req, res) => {
   }
 });
 
+// --- Airbnb vs Long-Term Rent API ---
+
+app.get('/api/dashboard/airbnb-pl', async (req, res) => {
+  try {
+    const AIRBNB_TENANT_NAME = 'Airbnb';
+    const LONG_TERM_RENT = 1125;
+    const AIRBNB_START_MONTH = '2026-04'; // opportunity cost starts here
+
+    const airbnbTenant = await prisma.tenant.findFirst({
+      where: { name: AIRBNB_TENANT_NAME, deletedAt: null },
+    });
+
+    if (!airbnbTenant) {
+      return res.json({ months: [], totals: {} });
+    }
+
+    const [payments, expenses] = await Promise.all([
+      prisma.payment.findMany({
+        where: { tenantId: airbnbTenant.id, deletedAt: null },
+        orderBy: { date: 'asc' },
+      }),
+      prisma.expense.findMany({
+        where: { category: 'Airbnb', deletedAt: null },
+        orderBy: { date: 'asc' },
+      }),
+    ]);
+
+    const monthlyData = {};
+
+    for (const p of payments) {
+      const key = `${p.date.getUTCFullYear()}-${String(p.date.getUTCMonth() + 1).padStart(2, '0')}`;
+      if (!monthlyData[key]) monthlyData[key] = { income: 0, expenses: 0 };
+      monthlyData[key].income += p.amount;
+    }
+
+    for (const e of expenses) {
+      const key = `${e.date.getUTCFullYear()}-${String(e.date.getUTCMonth() + 1).padStart(2, '0')}`;
+      if (!monthlyData[key]) monthlyData[key] = { income: 0, expenses: 0 };
+      monthlyData[key].expenses += e.amount;
+    }
+
+    const months = Object.keys(monthlyData).sort().map(key => {
+      const rent = key >= AIRBNB_START_MONTH ? LONG_TERM_RENT : 0;
+      const income = Math.round(monthlyData[key].income * 100) / 100;
+      const exp = Math.round(monthlyData[key].expenses * 100) / 100;
+      const advantage = Math.round((income - exp - rent) * 100) / 100;
+      return { month: key, income, expenses: exp, longTermRent: rent, advantage };
+    });
+
+    const totals = months.reduce((acc, m) => ({
+      income: Math.round((acc.income + m.income) * 100) / 100,
+      expenses: Math.round((acc.expenses + m.expenses) * 100) / 100,
+      longTermRent: acc.longTermRent + m.longTermRent,
+      advantage: Math.round((acc.advantage + m.advantage) * 100) / 100,
+    }), { income: 0, expenses: 0, longTermRent: 0, advantage: 0 });
+
+    res.json({ months, totals, config: { longTermRent: LONG_TERM_RENT, startMonth: AIRBNB_START_MONTH } });
+  } catch (error) {
+    console.error('Error computing Airbnb P&L:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // --- Recurring Expense API ---
 
 // List all recurring expense templates
