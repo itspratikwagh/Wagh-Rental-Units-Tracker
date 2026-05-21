@@ -23,7 +23,9 @@ import DialogTitle from '@mui/material/DialogTitle';
 import DialogContent from '@mui/material/DialogContent';
 import DialogActions from '@mui/material/DialogActions';
 import EditIcon from '@mui/icons-material/Edit';
+import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
 import IconButton from '@mui/material/IconButton';
+import Tooltip from '@mui/material/Tooltip';
 import axios from 'axios';
 import config from '../config';
 
@@ -355,15 +357,20 @@ function Dashboard() {
                 </Typography>
                 <Grid container spacing={2} sx={{ mb: 2 }}>
                   {[
-                    { label: 'Total ROI', value: formatPct(stat.totalROI) },
-                    { label: 'Annualized ROI', value: formatPct(stat.annualizedROI) },
-                    { label: 'Cash-on-Cash', value: formatPct(stat.cashOnCash) },
-                    { label: 'Cap Rate', value: `${(stat.capRate || 0).toFixed(1)}%` },
-                    { label: 'Equity Multiple', value: `${(stat.equityMultiple || 0).toFixed(2)}x` },
+                    { label: 'Total ROI', value: formatPct(stat.totalROI), info: 'Total Return / Total Cash Invested. Measures overall return on the cash you put in (down payment + closing costs).' },
+                    { label: 'Annualized ROI', value: formatPct(stat.annualizedROI), info: 'Total ROI adjusted to an annual rate using compound growth. Lets you compare against other investments like stocks or GICs.' },
+                    { label: 'Cash-on-Cash', value: formatPct(stat.cashOnCash), info: 'Annual Cash Flow / Total Cash Invested. Measures how much cash income your invested dollars generate each year, ignoring appreciation.' },
+                    { label: 'Cap Rate', value: `${(stat.capRate || 0).toFixed(1)}%`, info: 'Annual Net Operating Income / Market Value. NOI = Rent Income minus Operating Expenses (excludes mortgage). Used to compare properties regardless of financing.' },
+                    { label: 'Equity Multiple', value: `${(stat.equityMultiple || 0).toFixed(2)}x`, info: 'Total Cash Returned / Total Cash Invested. A 2.0x means you doubled your money. Includes appreciation, equity buildup, and cash flow.' },
                   ].map((card) => (
                     <Grid item xs={6} md={2.4} key={card.label}>
-                      <Paper sx={{ p: 2, height: 100, display: 'flex', flexDirection: 'column', justifyContent: 'center', textAlign: 'center' }}>
-                        <Typography variant="body2" color="text.secondary">{card.label}</Typography>
+                      <Paper sx={{ p: 2, height: 100, display: 'flex', flexDirection: 'column', justifyContent: 'center', textAlign: 'center', position: 'relative' }}>
+                        <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 0.5 }}>
+                          <Typography variant="body2" color="text.secondary">{card.label}</Typography>
+                          <Tooltip title={card.info} arrow placement="top" slotProps={{ tooltip: { sx: { maxWidth: 280, fontSize: '0.8rem', lineHeight: 1.5 } } }}>
+                            <InfoOutlinedIcon sx={{ fontSize: 15, color: 'text.disabled', cursor: 'help' }} />
+                          </Tooltip>
+                        </Box>
                         <Typography variant="h6" color={parseFloat(card.value) >= 0 ? 'success.main' : 'error'}>{card.value}</Typography>
                       </Paper>
                     </Grid>
