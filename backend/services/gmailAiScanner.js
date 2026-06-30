@@ -1,5 +1,5 @@
 const Anthropic = require('@anthropic-ai/sdk');
-const { getGmailClient, decodeBody, getHtmlBody, scanGmail } = require('./gmail');
+const { getGmailClient, decodeBody, getHtmlBody, scanGmail, buildAfterClause } = require('./gmail');
 
 let anthropicClient = null;
 
@@ -11,7 +11,7 @@ function getClient() {
 }
 
 const BATCH_SIZE = 20;
-const MAX_EMAILS = 500;
+const MAX_EMAILS = 2000;
 
 // Build context about tenants and properties for Claude
 async function buildScanContext(prisma) {
@@ -126,7 +126,10 @@ async function fetchRecentEmails(gmail, prisma, afterClause, maxResults) {
     allMessageIds.push(...messages.map(m => m.id));
     pageToken = res.data.nextPageToken;
 
-    if (allMessageIds.length >= MAX_EMAILS) break;
+    if (allMessageIds.length >= MAX_EMAILS) {
+      console.warn(`[Gmail] Hit MAX_EMAILS cap (${MAX_EMAILS}) — some emails may have been skipped. Consider running a rescan with an earlier afterDate.`);
+      break;
+    }
   } while (pageToken);
 
   // Deduplicate against already-processed emails (pending transactions + scanned emails)
@@ -438,18 +441,9 @@ async function scanGmailWithAI(prisma, options = {}) {
   // ============================================================
   console.log('Phase 2: Running AI scanner for remaining emails...');
 
-  // Build date filter
-  let afterClause = 'newer_than:14d';
-  if (syncState.lastSyncAt) {
-    const epoch = Math.floor(new Date(syncState.lastSyncAt).getTime() / 1000);
-    afterClause = `after:${epoch}`;
-  }
-  if (options.afterDate) {
-    const d = new Date(options.afterDate);
-    if (!isNaN(d.getTime())) {
-      afterClause = `after:${Math.floor(d.getTime() / 1000)}`;
-    }
-  }
+  // Self-healing date filter — never looks back less than LOOKBACK_DAYS even if
+  // lastSyncAt has advanced past unprocessed emails. Dedup prevents reprocessing.
+  const afterClause = buildAfterClause(syncState.lastSyncAt, options.afterDate);
 
   const maxResults = options.maxResults || 100;
 
@@ -510,7 +504,15 @@ async function scanGmailWithAI(prisma, options = {}) {
           continue;
         }
 
+        const batchResults = await createPendingTransactions(prisma, transactions, emailMap);
+        aiResults.payments += batchResults.payments;
+        aiResults.expenses += batchResults.expenses;
+        aiResults.autoRejected += batchResults.autoRejected || 0;
+        aiResults.errors.push(...batchResults.errors);
+
         // Record ALL emails in this batch as scanned (even ones Claude ignored)
+        // — AFTER pending transactions are created, so a creation failure doesn't
+        // mark an email scanned without saving its transaction.
         await Promise.all(
           emails.map(e =>
             prisma.scannedEmail.upsert({
@@ -520,12 +522,6 @@ async function scanGmailWithAI(prisma, options = {}) {
             })
           )
         );
-
-        const batchResults = await createPendingTransactions(prisma, transactions, emailMap);
-        aiResults.payments += batchResults.payments;
-        aiResults.expenses += batchResults.expenses;
-        aiResults.autoRejected += batchResults.autoRejected || 0;
-        aiResults.errors.push(...batchResults.errors);
       } catch (err) {
         aiResults.errors.push(`Batch ${i / BATCH_SIZE + 1}: ${err.message}`);
         console.error(`Batch ${i / BATCH_SIZE + 1} failed:`, err);
@@ -533,20 +529,24 @@ async function scanGmailWithAI(prisma, options = {}) {
     }
   }
 
-  // ============================================================
-  // Update sync state (once, at the end)
-  // ============================================================
-  await prisma.gmailSyncState.update({
-    where: { id: syncState.id },
-    data: { lastSyncAt: new Date() },
-  });
-
   // Combine results
   const totalPayments = (keywordResults.interac || 0) + aiResults.payments;
   const totalExpenses = (keywordResults.outgoing_interac || 0) + (keywordResults.utility || 0) + (keywordResults.amazon || 0) + aiResults.expenses;
   const allErrors = [...(keywordResults.errors || []), ...aiResults.errors];
 
-  if (allErrors.length > 0) {
+  // ============================================================
+  // Update sync state — ONLY if the scan completed without errors.
+  // Advancing lastSyncAt after a partial/failed scan would skip the
+  // unprocessed emails permanently. The self-healing LOOKBACK window
+  // is the second line of defense if this ever advances too far.
+  // ============================================================
+  if (allErrors.length === 0) {
+    await prisma.gmailSyncState.update({
+      where: { id: syncState.id },
+      data: { lastSyncAt: new Date() },
+    });
+  } else {
+    console.error(`Scan completed with ${allErrors.length} error(s) — NOT advancing lastSyncAt so missed emails get retried.`);
     console.error('Scan errors:', allErrors);
   }
 

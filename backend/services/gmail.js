@@ -1,5 +1,29 @@
 const { google } = require('googleapis');
 
+// Minimum lookback window for every scan. Even if lastSyncAt is recent, we always
+// re-scan at least this many days so a corrupted/over-advanced lastSyncAt can't
+// permanently skip emails. Dedup (pendingTransaction + scannedEmail) prevents doubles.
+const LOOKBACK_DAYS = 35;
+
+// Build a Gmail `after:` clause that is self-healing.
+// - options.afterDate (explicit override, e.g. historical scan) takes priority
+// - otherwise: the EARLIER of lastSyncAt and (now - LOOKBACK_DAYS), so we never
+//   look back less than LOOKBACK_DAYS even if lastSyncAt jumped ahead.
+function buildAfterClause(lastSyncAt, afterDate) {
+  if (afterDate) {
+    const d = new Date(afterDate);
+    if (!isNaN(d.getTime())) return `after:${Math.floor(d.getTime() / 1000)}`;
+    return `after:${afterDate}`;
+  }
+  const lookbackFloor = Date.now() - LOOKBACK_DAYS * 24 * 60 * 60 * 1000;
+  let effective = lookbackFloor;
+  if (lastSyncAt) {
+    const syncEpoch = new Date(lastSyncAt).getTime();
+    effective = Math.min(syncEpoch, lookbackFloor);
+  }
+  return `after:${Math.floor(effective / 1000)}`;
+}
+
 // Utility email parsers — map sender to property and extract amounts
 const UTILITY_PARSERS = [
   {
@@ -412,17 +436,9 @@ async function scanGmail(prisma, options = {}) {
   const gmail = await getGmailClient(syncState.refreshToken);
   const results = { interac: 0, outgoing_interac: 0, utility: 0, amazon: 0, errors: [] };
 
-  // Gmail accepts after:YYYY/M/D — strip leading zeros to be safe
-  let afterClause = 'newer_than:14d';
-  if (options.afterDate) {
-    // Convert "2025/09/01" to epoch seconds for reliable filtering
-    const d = new Date(options.afterDate);
-    if (!isNaN(d.getTime())) {
-      afterClause = `after:${Math.floor(d.getTime() / 1000)}`;
-    } else {
-      afterClause = `after:${options.afterDate}`;
-    }
-  }
+  // Self-healing window: scan back at least LOOKBACK_DAYS, more if lastSyncAt is older.
+  // Dedup against existing pendingTransactions makes re-scanning safe.
+  let afterClause = buildAfterClause(syncState.lastSyncAt, options.afterDate);
   const maxResults = options.maxResults || 50;
 
   // Scan for Interac e-Transfers (try multiple search queries)
@@ -749,5 +765,6 @@ module.exports = {
   getHtmlBody,
   scanGmail,
   getRentMonth,
+  buildAfterClause,
   UTILITY_PARSERS,
 };
