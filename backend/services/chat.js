@@ -374,9 +374,11 @@ async function chat(prisma, message, conversationHistory = []) {
   const client = getClient();
   const context = await buildDataContext(prisma);
 
+  // claude-sonnet-5 runs adaptive thinking by default, and thinking counts
+  // against max_tokens — 1024 left no room for the visible answer.
   const response = await client.messages.create({
     model: 'claude-sonnet-5',
-    max_tokens: 1024,
+    max_tokens: 8192,
     system: context,
     tools: TOOLS,
     messages: [
@@ -409,15 +411,14 @@ async function chat(prisma, message, conversationHistory = []) {
     };
   }
 
-  // Pure text response (read-only query)
-  const assistantMessage = response.content[0].text;
-
+  // Pure text response (read-only query). Never index content[0] directly —
+  // claude-sonnet-5 prepends thinking blocks, so text must be filtered by type.
   return {
-    response: assistantMessage,
+    response: textBlocks,
     conversationHistory: [
       ...conversationHistory,
       { role: 'user', content: message },
-      { role: 'assistant', content: assistantMessage },
+      { role: 'assistant', content: textBlocks },
     ],
   };
 }
@@ -432,7 +433,7 @@ async function confirmAction(prisma, action, conversationHistory) {
 
   const response = await client.messages.create({
     model: 'claude-sonnet-5',
-    max_tokens: 512,
+    max_tokens: 8192,
     system: context,
     tools: TOOLS,
     messages: [
@@ -468,4 +469,4 @@ async function confirmAction(prisma, action, conversationHistory) {
   };
 }
 
-module.exports = { chat, confirmAction, executeAction };
+module.exports = { chat, confirmAction, executeAction, buildDataContext, TOOLS };
