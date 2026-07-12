@@ -42,6 +42,23 @@ const TOOLS = [
     },
   },
   {
+    name: 'create_tenant',
+    description: 'Add a new tenant to a property. Use when the user says a new tenant is moving in or asks to add a tenant.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'Tenant full name' },
+        email: { type: 'string', description: 'Tenant email (used for automatic rent reminders)' },
+        phone: { type: 'string', description: 'Tenant phone number' },
+        propertyName: { type: 'string', description: 'Existing property name (e.g., "Calgary Property")' },
+        rentAmount: { type: 'number', description: 'Monthly rent in CAD' },
+        leaseStart: { type: 'string', description: 'Lease start date, YYYY-MM-DD' },
+        leaseEnd: { type: 'string', description: 'Lease end date, YYYY-MM-DD' },
+      },
+      required: ['name', 'propertyName', 'rentAmount', 'leaseStart', 'leaseEnd'],
+    },
+  },
+  {
     name: 'update_tenant',
     description: 'Update tenant details like rent amount, lease dates, email, or phone.',
     input_schema: {
@@ -225,6 +242,36 @@ async function executeAction(prisma, action) {
       return { success: true, message: `Payment recorded: $${input.amount} from ${tenant.name}`, id: payment.id };
     }
 
+    case 'create_tenant': {
+      const property = await prisma.property.findFirst({
+        where: { name: { contains: input.propertyName, mode: 'insensitive' }, deletedAt: null },
+      });
+      if (!property) throw new Error(`Property "${input.propertyName}" not found`);
+
+      const existing = await prisma.tenant.findFirst({
+        where: { name: { contains: input.name, mode: 'insensitive' }, isArchived: false, deletedAt: null },
+      });
+      if (existing) throw new Error(`An active tenant named "${existing.name}" already exists`);
+
+      const tenant = await prisma.tenant.create({
+        data: {
+          name: input.name,
+          email: input.email || '',
+          phone: input.phone || '',
+          propertyId: property.id,
+          rentAmount: input.rentAmount,
+          leaseStart: new Date(input.leaseStart),
+          leaseEnd: new Date(input.leaseEnd),
+          updatedAt: new Date(),
+        },
+      });
+      return {
+        success: true,
+        message: `Tenant created: ${tenant.name} at ${property.name} — $${input.rentAmount.toFixed(2)}/mo, lease ${input.leaseStart} → ${input.leaseEnd}`,
+        id: tenant.id,
+      };
+    }
+
     case 'update_tenant': {
       const tenant = await prisma.tenant.findFirst({
         where: { name: { contains: input.tenantName, mode: 'insensitive' }, deletedAt: null },
@@ -298,6 +345,8 @@ function describeAction(toolName, input) {
       return `Add expense: **${input.description}** — $${input.amount.toFixed(2)} on ${input.date} (${input.category}) for ${input.propertyName}`;
     case 'create_payment':
       return `Record payment: **$${input.amount.toFixed(2)}** from ${input.tenantName} on ${input.date}${input.paymentMethod ? ` via ${input.paymentMethod}` : ''}${input.notes ? ` (${input.notes})` : ''}`;
+    case 'create_tenant':
+      return `Add tenant **${input.name}** to ${input.propertyName} — $${input.rentAmount.toFixed(2)}/mo, lease ${input.leaseStart} → ${input.leaseEnd}${input.email ? `, ${input.email}` : ''}`;
     case 'update_tenant': {
       const changes = [];
       if (input.rentAmount != null) changes.push(`rent → $${input.rentAmount}`);

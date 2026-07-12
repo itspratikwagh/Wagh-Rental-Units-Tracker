@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   Box,
   Button,
@@ -30,6 +31,7 @@ import FilterListIcon from '@mui/icons-material/FilterList';
 import config from '../config';
 
 const Tenants = () => {
+  const navigate = useNavigate();
   const [tenants, setTenants] = useState([]);
   const [properties, setProperties] = useState([]);
   const [open, setOpen] = useState(false);
@@ -369,7 +371,10 @@ const Tenants = () => {
           {filteredTenants.map((tenant) => (
             <Grid item xs={12} sm={6} md={4} key={tenant.id}>
               <Card>
-                <CardContent>
+                <CardContent
+                  onClick={() => navigate(`/tenants/${tenant.id}`)}
+                  sx={{ cursor: 'pointer', '&:hover': { backgroundColor: 'action.hover' } }}
+                >
                   <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', mb: 1 }}>
                     <Typography variant="h6" gutterBottom>
                       {tenant.name}

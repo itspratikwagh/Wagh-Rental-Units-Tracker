@@ -73,6 +73,35 @@ model Tenant {
   Expense    Expense[]
   Payment    Payment[]
   Property   Property  @relation(fields: [propertyId], references: [id])
+  TenantDocument TenantDocument[]
+}
+
+// Uploaded tenant files (ID scans, signed leases). Stored as bytea in
+// Postgres because Railway's container filesystem is ephemeral.
+model TenantDocument {
+  id         String   @id @default(uuid())
+  tenantId   String
+  kind       String   @default("other") // "id" | "lease" | "other"
+  filename   String
+  mimeType   String
+  sizeBytes  Int
+  data       Bytes
+  uploadedAt DateTime @default(now())
+  Tenant     Tenant   @relation(fields: [tenantId], references: [id])
+}
+
+// One row per reminder actually sent — the unique dedupeKey makes reminder
+// runs idempotent across restarts and manual re-triggers.
+// rent:    rent:{tenantId}:{YYYY-MM}
+// renewal: renewal:{tenantId}:{leaseEnd YYYY-MM-DD}:{daysBefore}
+model ReminderLog {
+  id        String   @id @default(uuid())
+  type      String   // "rent" | "renewal"
+  tenantId  String
+  dedupeKey String   @unique
+  status    String   @default("sent")
+  detail    String?
+  sentAt    DateTime @default(now())
 }
 
 model PendingTransaction {

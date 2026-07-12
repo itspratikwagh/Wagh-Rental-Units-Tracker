@@ -21,6 +21,7 @@ import MenuIcon from '@mui/icons-material/Menu';
 import Dashboard from './components/Dashboard';
 import Properties from './components/Properties';
 import Tenants from './components/Tenants';
+import TenantDetail from './components/TenantDetail';
 import Payments from './components/Payments';
 import Expenses from './components/Expenses';
 import Inbox from './components/Inbox';
@@ -225,6 +226,7 @@ function App() {
               <Route path="/" element={<Dashboard />} />
               <Route path="/properties" element={<Properties />} />
               <Route path="/tenants" element={<Tenants />} />
+              <Route path="/tenants/:id" element={<TenantDetail />} />
               <Route path="/payments" element={<Payments />} />
               <Route path="/expenses" element={<Expenses />} />
               <Route path="/inbox" element={<Inbox />} />

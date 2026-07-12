@@ -310,6 +310,91 @@ app.delete('/api/tenants/:id', async (req, res) => {
   }
 });
 
+// ============ Tenant documents (ID scans, lease papers) ============
+// Stored as bytea in Postgres — Railway's filesystem is ephemeral.
+const multer = require('multer');
+const docUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 10 * 1024 * 1024 }, // 10MB
+});
+const DOC_MIME_ALLOWLIST = ['application/pdf', 'image/jpeg', 'image/png', 'image/webp', 'image/heic'];
+const DOC_KINDS = ['id', 'lease', 'other'];
+
+app.post('/api/tenants/:id/documents', (req, res) => {
+  docUpload.single('file')(req, res, async (err) => {
+    if (err) {
+      if (err.code === 'LIMIT_FILE_SIZE') {
+        return res.status(413).json({ error: 'File exceeds 10MB limit' });
+      }
+      return res.status(400).json({ error: err.message });
+    }
+    try {
+      if (!req.file) return res.status(400).json({ error: 'No file provided (field name: "file")' });
+      if (!DOC_MIME_ALLOWLIST.includes(req.file.mimetype)) {
+        return res.status(400).json({ error: `Unsupported file type ${req.file.mimetype}. Allowed: PDF, JPEG, PNG, WebP, HEIC` });
+      }
+      const kind = DOC_KINDS.includes(req.body.kind) ? req.body.kind : 'other';
+
+      const tenant = await prisma.tenant.findFirst({
+        where: { id: req.params.id, deletedAt: null },
+      });
+      if (!tenant) return res.status(404).json({ error: 'Tenant not found' });
+
+      const doc = await prisma.tenantDocument.create({
+        data: {
+          tenantId: tenant.id,
+          kind,
+          filename: req.file.originalname,
+          mimeType: req.file.mimetype,
+          sizeBytes: req.file.size,
+          data: req.file.buffer,
+        },
+        select: { id: true, kind: true, filename: true, mimeType: true, sizeBytes: true, uploadedAt: true },
+      });
+      res.json(doc);
+    } catch (error) {
+      console.error('Document upload error:', error);
+      res.status(500).json({ error: 'Failed to upload document' });
+    }
+  });
+});
+
+// List a tenant's documents — metadata only, never the blob
+app.get('/api/tenants/:id/documents', async (req, res) => {
+  try {
+    const docs = await prisma.tenantDocument.findMany({
+      where: { tenantId: req.params.id },
+      select: { id: true, kind: true, filename: true, mimeType: true, sizeBytes: true, uploadedAt: true },
+      orderBy: { uploadedAt: 'desc' },
+    });
+    res.json(docs);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to fetch documents' });
+  }
+});
+
+app.get('/api/documents/:docId/download', async (req, res) => {
+  try {
+    const doc = await prisma.tenantDocument.findUnique({ where: { id: req.params.docId } });
+    if (!doc) return res.status(404).json({ error: 'Document not found' });
+    res.set('Content-Type', doc.mimeType);
+    res.set('Content-Disposition', `attachment; filename="${doc.filename.replace(/"/g, '')}"`);
+    res.send(Buffer.from(doc.data));
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to download document' });
+  }
+});
+
+// Hard delete — no reason to keep orphaned blobs in the database
+app.delete('/api/documents/:docId', async (req, res) => {
+  try {
+    await prisma.tenantDocument.delete({ where: { id: req.params.docId } });
+    res.json({ message: 'Document deleted' });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to delete document' });
+  }
+});
+
 // Get all payments
 app.get('/api/payments', async (req, res) => {
   try {
@@ -654,6 +739,40 @@ app.get('/health', (req, res) => {
   res.json({ status: 'ok' });
 });
 
+// Manual reminder triggers — for testing and catch-up. Bypass the day guard.
+// ?dryRun=true reports what WOULD happen without sending or logging anything.
+app.post('/api/reminders/rent/run', async (req, res) => {
+  try {
+    const { runRentReminders } = require('./services/reminders');
+    const results = await runRentReminders(prisma, { dryRun: req.query.dryRun === 'true' });
+    res.json(results);
+  } catch (error) {
+    console.error('Rent reminder run error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/api/reminders/renewal/run', async (req, res) => {
+  try {
+    const { runRenewalReminders } = require('./services/reminders');
+    const results = await runRenewalReminders(prisma, { dryRun: req.query.dryRun === 'true' });
+    res.json(results);
+  } catch (error) {
+    console.error('Renewal reminder run error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.get('/api/reminders/log', async (req, res) => {
+  try {
+    const limit = Math.min(parseInt(req.query.limit, 10) || 50, 200);
+    const logs = await prisma.reminderLog.findMany({ orderBy: { sentAt: 'desc' }, take: limit });
+    res.json(logs);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to fetch reminder log' });
+  }
+});
+
 // Sender rules — teachable aliases ("Savannah Hummel" pays "Justin Sox"'s rent)
 // and skip rules (outgoing transfers that are personal, not property expenses).
 // Used by both the keyword matchers and the AI scanner's context.
@@ -707,6 +826,32 @@ cron.schedule('0 */6 * * *', async () => {
     }
   }
 });
+
+// Rent reminders — 9:00 Edmonton on the 30th (or the last day of February).
+// Cron covers 28-30; isRentReminderDay decides whether today actually qualifies.
+cron.schedule('0 9 28-30 * *', async () => {
+  const { runRentReminders, isRentReminderDay } = require('./services/reminders');
+  if (!isRentReminderDay(new Date())) return;
+  try {
+    const r = await runRentReminders(prisma);
+    console.log(`[Cron] Rent reminders: sent ${r.sent.length}, skipped ${r.skipped.length}`);
+  } catch (err) {
+    console.error('[Cron] Rent reminders error:', err.message);
+  }
+}, { timezone: 'America/Edmonton' });
+
+// Lease renewal alerts — daily 9:00 Edmonton (90/60/30 days before lease end)
+cron.schedule('0 9 * * *', async () => {
+  const { runRenewalReminders } = require('./services/reminders');
+  try {
+    const r = await runRenewalReminders(prisma);
+    if (r.notified.length > 0) {
+      console.log(`[Cron] Renewal reminders: notified ${r.notified.map(n => n.name).join(', ')}`);
+    }
+  } catch (err) {
+    console.error('[Cron] Renewal reminders error:', err.message);
+  }
+}, { timezone: 'America/Edmonton' });
 
 // Generate recurring expenses daily at midnight
 cron.schedule('0 0 * * *', async () => {
