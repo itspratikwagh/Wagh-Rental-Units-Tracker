@@ -137,6 +137,27 @@ async function undoApproval(prisma, pending) {
 // Payments: a completed payment for the same tenant in the same rent month.
 // Expenses: same amount within ±3 days.
 async function hasExistingRecord(prisma, pending) {
+  const isAirbnb = (pending.senderName || '').toLowerCase().includes('airbnb');
+
+  if (pending.type === 'payment' && pending.tenantId && isAirbnb) {
+    // Airbnb pays out several times a month — dedup by amount within ±3 days
+    // instead of one-per-month, or every payout after the first would be held
+    const threeDaysMs = 3 * 24 * 60 * 60 * 1000;
+    const txDate = new Date(pending.date);
+    const nearby = await prisma.payment.findMany({
+      where: {
+        tenantId: pending.tenantId,
+        status: 'completed',
+        deletedAt: null,
+        date: {
+          gte: new Date(txDate.getTime() - threeDaysMs),
+          lte: new Date(txDate.getTime() + threeDaysMs),
+        },
+      },
+    });
+    return nearby.some(pmt => Math.abs(pmt.amount - pending.amount) < 0.02);
+  }
+
   if (pending.type === 'payment' && pending.tenantId) {
     const rentMonth = getRentMonth(pending.date);
     const monthStart = new Date(rentMonth.getFullYear(), rentMonth.getMonth(), 1);
