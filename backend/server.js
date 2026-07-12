@@ -37,6 +37,28 @@ app.use(cors({
 
 app.use(express.json());
 
+// API authentication — set API_KEY in env to require `Authorization: Bearer <key>`
+// on all /api routes. When API_KEY is unset, the API stays open (local dev).
+const API_KEY = process.env.API_KEY;
+if (!API_KEY) {
+  console.warn('[auth] API_KEY not set — API is UNAUTHENTICATED. Set API_KEY to secure it.');
+}
+app.use((req, res, next) => {
+  if (!API_KEY || !req.path.startsWith('/api')) return next();
+
+  // OAuth endpoints are browser navigations that can't carry headers:
+  // /auth accepts the key as a query param; /callback is protected by
+  // Google's short-lived authorization code.
+  if (req.path === '/api/gmail/callback') return next();
+  if (req.path === '/api/gmail/auth') {
+    if (req.query.key === API_KEY) return next();
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+
+  if (req.headers.authorization === `Bearer ${API_KEY}`) return next();
+  return res.status(401).json({ error: 'Unauthorized' });
+});
+
 // Get all properties
 app.get('/api/properties', async (req, res) => {
   try {
@@ -632,11 +654,51 @@ app.get('/health', (req, res) => {
   res.json({ status: 'ok' });
 });
 
+// Sender rules — teachable aliases ("Savannah Hummel" pays "Justin Sox"'s rent)
+// and skip rules (outgoing transfers that are personal, not property expenses).
+// Used by both the keyword matchers and the AI scanner's context.
+app.get('/api/sender-rules', async (req, res) => {
+  try {
+    const rules = await prisma.senderRule.findMany({ orderBy: [{ kind: 'asc' }, { senderName: 'asc' }] });
+    res.json(rules);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to fetch sender rules' });
+  }
+});
+
+app.post('/api/sender-rules', async (req, res) => {
+  try {
+    const { kind, senderName, tenantName, notes } = req.body;
+    if (!['alias', 'skip'].includes(kind)) {
+      return res.status(400).json({ error: 'kind must be "alias" or "skip"' });
+    }
+    if (!senderName) return res.status(400).json({ error: 'senderName is required' });
+    if (kind === 'alias' && !tenantName) {
+      return res.status(400).json({ error: 'tenantName is required for alias rules' });
+    }
+    const rule = await prisma.senderRule.create({
+      data: { kind, senderName, tenantName: tenantName || null, notes: notes || null, updatedAt: new Date() },
+    });
+    res.json(rule);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to create sender rule' });
+  }
+});
+
+app.delete('/api/sender-rules/:id', async (req, res) => {
+  try {
+    await prisma.senderRule.delete({ where: { id: req.params.id } });
+    res.json({ message: 'Sender rule deleted' });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to delete sender rule' });
+  }
+});
+
 // Scan Gmail every 6 hours using AI scanner (if connected)
 cron.schedule('0 */6 * * *', async () => {
   try {
     const { scanGmailWithAI } = require('./services/gmailAiScanner');
-    const results = await scanGmailWithAI(prisma);
+    const results = await scanGmailWithAI(prisma, { trigger: 'cron' });
     console.log(`[Cron] Gmail AI scan: ${results.payments} payments, ${results.expenses} expenses`);
   } catch (err) {
     // Not connected or scan failed — skip silently

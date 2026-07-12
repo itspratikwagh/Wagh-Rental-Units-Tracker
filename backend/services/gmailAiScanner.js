@@ -1,5 +1,7 @@
 const Anthropic = require('@anthropic-ai/sdk');
 const { getGmailClient, decodeBody, getHtmlBody, scanGmail, buildAfterClause } = require('./gmail');
+const { sendPush } = require('./notify');
+const { autoApproveHighConfidence } = require('./approval');
 
 let anthropicClient = null;
 
@@ -13,11 +15,12 @@ function getClient() {
 const BATCH_SIZE = 20;
 const MAX_EMAILS = 2000;
 
-// Build context about tenants and properties for Claude
+// Build context about tenants, properties, and sender rules for Claude
 async function buildScanContext(prisma) {
-  const [properties, tenants] = await Promise.all([
+  const [properties, tenants, senderRules] = await Promise.all([
     prisma.property.findMany({ where: { deletedAt: null } }),
     prisma.tenant.findMany({ where: { deletedAt: null }, include: { Property: true } }),
+    prisma.senderRule.findMany(),
   ]);
 
   const propertyList = properties.map(p => ({
@@ -36,10 +39,21 @@ async function buildScanContext(prisma) {
     isArchived: t.isArchived,
   }));
 
-  return { propertyList, tenantList };
+  return {
+    propertyList,
+    tenantList,
+    aliasRules: senderRules.filter(r => r.kind === 'alias'),
+    skipRules: senderRules.filter(r => r.kind === 'skip'),
+  };
 }
 
-function buildSystemPrompt(propertyList, tenantList) {
+function buildSystemPrompt(propertyList, tenantList, aliasRules = [], skipRules = []) {
+  const aliasText = aliasRules.length > 0
+    ? aliasRules.map(r => `- "${r.senderName}" -> "${r.tenantName}"`).join('\n')
+    : '- (none)';
+  const skipText = skipRules.length > 0
+    ? skipRules.map(r => `${r.senderName}${r.notes ? ` (${r.notes})` : ''}`).join(', ')
+    : '(none)';
   return `You are a financial email classifier for a rental property manager in Alberta, Canada.
 Your job is to analyze emails and identify which ones are related to rental property income or expenses.
 
@@ -50,13 +64,11 @@ TENANTS (current and archived):
 ${JSON.stringify(tenantList, null, 2)}
 
 KNOWN SENDER ALIASES (sender name -> tenant name):
-- "Savannah Hummel" -> "Justin Sox"
-- "Godwin Antepim" or "Godwin Kofi Antepim" -> "Eunice Frimpomaa"
-- "Parveen Simplii" -> "Parveen Kumar"
+${aliasText}
 
 CLASSIFICATION RULES:
 - Interac e-Transfer RECEIVED (incoming money, "You've received", from notify@payments.interac.ca) = PAYMENT (rent from tenant). Match sender to a tenant using name, email, or aliases above.
-- Interac e-Transfer SENT (outgoing money, "Your transfer to" or "You've sent X money", from payments.interac.ca) = EXPENSE. Skip these known personal recipients: Kraken (crypto), Sandip Das (personal loan), Evelyn Ackah (lawyer). Outgoing transfers to Airbnb guests (refunds, partial refunds for early checkout) are legitimate property expenses — categorize as "Airbnb".
+- Interac e-Transfer SENT (outgoing money, "Your transfer to" or "You've sent X money", from payments.interac.ca) = EXPENSE. Skip these known personal recipients (NOT property expenses): ${skipText}. Outgoing transfers to Airbnb guests (refunds, partial refunds for early checkout) are legitimate property expenses — categorize as "Airbnb".
 - Utility bills (Enmax/Easymax, EPCOR, Shaw) = EXPENSE. Map Enmax to Calgary property, EPCOR to Edmonton property. Shaw: look for account numbers 099-0137-3821 (Edmonton) or 099-0203-0540 (Calgary).
 - Amazon.ca order confirmations = EXPENSE (Home Improvement category). Look for delivery city (Calgary or Edmonton) to map to property.
 - Insurance bills, mortgage statements, property tax notices = EXPENSE.
@@ -86,26 +98,43 @@ CATEGORY VALUES for expenses:
 - "Property Taxes" for property tax
 - "Other" for anything else
 
-Respond with ONLY a valid JSON array. For irrelevant emails, omit them entirely (do NOT include them).
-Each relevant email object must have this exact structure:
-{
-  "gmailMessageId": "<id from input>",
-  "type": "payment" or "expense",
-  "source": "<source value from list above>",
-  "senderName": "<person or company name>",
-  "senderEmail": "<email address if available>",
-  "amount": <number, the dollar amount>,
-  "date": "<ISO 8601 date string>",
-  "description": "<short human-readable description>",
-  "category": "<category value>",
-  "propertyId": "<matched property ID from the list above, or null>",
-  "tenantId": "<matched tenant ID from the list above, or null>",
-  "matchConfidence": "high" or "medium" or "none"
+Return the relevant transactions in the "transactions" array. For irrelevant emails, omit them entirely (do NOT include them). If no emails are relevant, return an empty transactions array.`;
 }
 
-If no emails are relevant, return an empty array: []
-Do NOT include any text outside the JSON array.`;
-}
+// JSON schema for structured outputs — the API guarantees the response
+// matches this shape, so no parse-retry logic is needed.
+const TRANSACTIONS_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['transactions'],
+  properties: {
+    transactions: {
+      type: 'array',
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['gmailMessageId', 'type', 'source', 'amount', 'date', 'matchConfidence'],
+        properties: {
+          gmailMessageId: { type: 'string', description: 'id from the input email' },
+          type: { type: 'string', enum: ['payment', 'expense'] },
+          source: {
+            type: 'string',
+            enum: ['interac_email', 'outgoing_interac_email', 'utility_email', 'amazon_email', 'other_email'],
+          },
+          senderName: { anyOf: [{ type: 'string' }, { type: 'null' }] },
+          senderEmail: { anyOf: [{ type: 'string' }, { type: 'null' }] },
+          amount: { type: 'number', description: 'dollar amount' },
+          date: { type: 'string', description: 'ISO 8601 date string' },
+          description: { anyOf: [{ type: 'string' }, { type: 'null' }] },
+          category: { anyOf: [{ type: 'string' }, { type: 'null' }] },
+          propertyId: { anyOf: [{ type: 'string' }, { type: 'null' }], description: 'matched property ID or null' },
+          tenantId: { anyOf: [{ type: 'string' }, { type: 'null' }], description: 'matched tenant ID or null' },
+          matchConfidence: { type: 'string', enum: ['high', 'medium', 'none'] },
+        },
+      },
+    },
+  },
+};
 
 // Fetch all recent emails from Gmail
 async function fetchRecentEmails(gmail, prisma, afterClause, maxResults) {
@@ -200,14 +229,23 @@ async function fetchEmailBatch(gmail, messageIds) {
   return emails;
 }
 
-// Send a batch of emails to Claude for analysis
+// Send a batch of emails to Claude for analysis.
+// Structured outputs guarantee schema-valid JSON — no parse-retry needed.
+// The system prompt (tenant/property context) is identical across batches
+// within a scan, so it's cached to cut input cost on batches 2..N.
 async function analyzeWithClaude(emails, systemPrompt) {
   const client = getClient();
 
   const response = await client.messages.create({
-    model: 'claude-sonnet-4-20250514',
-    max_tokens: 4096,
-    system: systemPrompt,
+    model: 'claude-sonnet-5',
+    max_tokens: 8192,
+    output_config: {
+      effort: 'low',
+      format: { type: 'json_schema', schema: TRANSACTIONS_SCHEMA },
+    },
+    system: [
+      { type: 'text', text: systemPrompt, cache_control: { type: 'ephemeral' } },
+    ],
     messages: [
       {
         role: 'user',
@@ -216,54 +254,19 @@ async function analyzeWithClaude(emails, systemPrompt) {
     ],
   });
 
+  if (response.stop_reason === 'max_tokens') {
+    throw new Error('Claude response truncated (max_tokens) — batch will be retried next scan');
+  }
+  if (response.stop_reason === 'refusal') {
+    throw new Error('Claude declined to analyze this batch — batch will be retried next scan');
+  }
+
   const text = response.content
     .filter(b => b.type === 'text')
     .map(b => b.text)
     .join('');
 
-  // Extract JSON from response (handle potential markdown code blocks)
-  let jsonStr = text.trim();
-  const codeBlockMatch = jsonStr.match(/```(?:json)?\s*([\s\S]*?)```/);
-  if (codeBlockMatch) {
-    jsonStr = codeBlockMatch[1].trim();
-  }
-
-  try {
-    return JSON.parse(jsonStr);
-  } catch (parseErr) {
-    console.error('Claude returned invalid JSON, attempting retry...');
-    console.error('Raw response:', text.substring(0, 500));
-
-    // Retry once asking for valid JSON
-    const retry = await client.messages.create({
-      model: 'claude-sonnet-4-20250514',
-      max_tokens: 4096,
-      system: systemPrompt,
-      messages: [
-        {
-          role: 'user',
-          content: `Analyze these ${emails.length} emails and identify any rental property income or expenses:\n\n${JSON.stringify(emails, null, 2)}`,
-        },
-        { role: 'assistant', content: text },
-        {
-          role: 'user',
-          content: 'Your response was not valid JSON. Please respond with ONLY a valid JSON array, no other text.',
-        },
-      ],
-    });
-
-    const retryText = retry.content
-      .filter(b => b.type === 'text')
-      .map(b => b.text)
-      .join('')
-      .trim();
-
-    let retryJson = retryText;
-    const retryBlock = retryJson.match(/```(?:json)?\s*([\s\S]*?)```/);
-    if (retryBlock) retryJson = retryBlock[1].trim();
-
-    return JSON.parse(retryJson);
-  }
+  return JSON.parse(text).transactions;
 }
 
 // Check if a transaction already exists in the DB (expenses or payments)
@@ -390,33 +393,65 @@ async function createPendingTransactions(prisma, transactions, emailMap) {
   return results;
 }
 
+// Verify the stored refresh token still works and return a Gmail client.
+// Only wipes the token on a DEFINITIVE revocation (invalid_grant / expired-or-revoked).
+// Transient network/API errors are retried once and then rethrown with the
+// token intact — a flaky network call must never force a manual reconnect.
+function isTokenRevocation(err) {
+  const msg = err.message || '';
+  const apiErr = err.response?.data?.error || '';
+  return (
+    apiErr === 'invalid_grant' ||
+    msg.includes('invalid_grant') ||
+    msg.includes('Token has been expired or revoked')
+  );
+}
+
+async function getVerifiedGmailClient(prisma, syncState) {
+  const gmail = await getGmailClient(syncState.refreshToken);
+
+  try {
+    await gmail.users.getProfile({ userId: 'me' });
+    return gmail;
+  } catch (firstErr) {
+    let err = firstErr;
+    if (!isTokenRevocation(err)) {
+      // Possibly transient — retry once before deciding anything
+      await new Promise(r => setTimeout(r, 2000));
+      try {
+        await gmail.users.getProfile({ userId: 'me' });
+        return gmail;
+      } catch (secondErr) {
+        if (!isTokenRevocation(secondErr)) throw secondErr; // transient/unknown: keep token
+        err = secondErr;
+      }
+    }
+
+    // Definitive revocation: clear token so the UI shows "Connect Gmail", and alert
+    await prisma.gmailSyncState.update({
+      where: { id: syncState.id },
+      data: { refreshToken: null },
+    });
+    await sendPush(
+      'Rental Tracker: Gmail disconnected',
+      'Google revoked the Gmail token. Open the app and click "Connect Gmail" to re-authorize.',
+      { priority: 'urgent', tags: 'rotating_light' }
+    );
+    throw new Error('Gmail token expired. Please reconnect Gmail.');
+  }
+}
+
 // Main hybrid scan function:
 // 1. Run keyword matchers FIRST for known email types (Interac, utilities, Amazon)
 //    — these are 100% reliable and never miss
 // 2. Then run AI scanner for everything else (catches new/unknown email types)
-async function scanGmailWithAI(prisma, options = {}) {
+async function runScan(prisma, options = {}) {
   const syncState = await prisma.gmailSyncState.findFirst();
   if (!syncState?.refreshToken) {
     throw new Error('Gmail not connected. Please authorize first.');
   }
 
-  let gmail;
-  try {
-    gmail = await getGmailClient(syncState.refreshToken);
-    // Test the connection with a lightweight call
-    await gmail.users.getProfile({ userId: 'me' });
-  } catch (err) {
-    const msg = err.message || '';
-    if (msg.includes('invalid_grant') || msg.includes('invalid_request') || msg.includes('Token has been expired or revoked')) {
-      // Clear the stale token so the frontend shows "Connect Gmail" again
-      await prisma.gmailSyncState.update({
-        where: { id: syncState.id },
-        data: { refreshToken: null },
-      });
-      throw new Error('Gmail token expired. Please reconnect Gmail.');
-    }
-    throw err;
-  }
+  const gmail = await getVerifiedGmailClient(prisma, syncState);
 
   // ============================================================
   // PHASE 1: Keyword matchers for known email types
@@ -482,8 +517,8 @@ async function scanGmailWithAI(prisma, options = {}) {
     console.log(`AI scanner: ${newMessageIds.length} new emails to analyze (${skippedIds.length} already processed)`);
 
     // Build context and process in batches
-    const { propertyList, tenantList } = await buildScanContext(prisma);
-    const systemPrompt = buildSystemPrompt(propertyList, tenantList);
+    const { propertyList, tenantList, aliasRules, skipRules } = await buildScanContext(prisma);
+    const systemPrompt = buildSystemPrompt(propertyList, tenantList, aliasRules, skipRules);
     const emailMap = new Map();
 
     for (let i = 0; i < newMessageIds.length; i += BATCH_SIZE) {
@@ -575,4 +610,95 @@ async function scanGmailWithAI(prisma, options = {}) {
   };
 }
 
-module.exports = { scanGmailWithAI, findExistingInDB };
+// Public entry point: wraps runScan so every scan (manual or cron) leaves a
+// ScanRun record and failures produce a push notification instead of dying
+// silently in the Railway logs.
+async function scanGmailWithAI(prisma, options = {}) {
+  const run = await prisma.scanRun.create({
+    data: { trigger: options.trigger || 'manual' },
+  });
+
+  let results;
+  try {
+    results = await runScan(prisma, options);
+  } catch (err) {
+    await prisma.scanRun.update({
+      where: { id: run.id },
+      data: {
+        finishedAt: new Date(),
+        status: 'failed',
+        errors: (err.message || 'Unknown error').slice(0, 4000),
+      },
+    }).catch(() => {});
+
+    // Token revocation already sent its own targeted push in getVerifiedGmailClient
+    const isDisconnect = (err.message || '').includes('reconnect') || (err.message || '').includes('not connected');
+    if (!isDisconnect) {
+      await sendPush(
+        'Rental Tracker: Gmail scan failed',
+        err.message || 'Unknown error',
+        { priority: 'high', tags: 'warning' }
+      );
+    }
+    throw err;
+  }
+
+  // Auto-approve high-confidence transactions found by THIS scan.
+  // Anything ambiguous stays in the inbox for manual review.
+  let autoApproved = [];
+  try {
+    const autoResult = await autoApproveHighConfidence(prisma, run.startedAt);
+    autoApproved = autoResult.approved;
+    results.errors.push(...autoResult.errors);
+    results.autoApproved = autoApproved.length;
+  } catch (err) {
+    results.errors.push(`Auto-approve: ${err.message}`);
+    results.autoApproved = 0;
+  }
+
+  const status = results.errors.length > 0 ? 'partial' : 'success';
+  await prisma.scanRun.update({
+    where: { id: run.id },
+    data: {
+      finishedAt: new Date(),
+      status,
+      totalFetched: results.scanLog?.totalFetched || 0,
+      newEmails: results.scanLog?.newEmails || 0,
+      payments: results.payments || 0,
+      expenses: results.expenses || 0,
+      autoRejected: results.autoRejected || 0,
+      autoApproved: autoApproved.length,
+      errors: results.errors.length > 0 ? results.errors.join('\n').slice(0, 4000) : null,
+    },
+  }).catch(e => console.error('Failed to record scan run:', e.message));
+
+  // Notify only when something happened: records were auto-approved or items need review
+  const needsReview = (results.total || 0) - autoApproved.length;
+  if (autoApproved.length > 0 || needsReview > 0) {
+    const lines = autoApproved.map(({ pending }) =>
+      pending.type === 'payment'
+        ? `✓ $${pending.amount.toFixed(2)} rent from ${pending.senderName || 'Unknown'}`
+        : `✓ $${pending.amount.toFixed(2)} — ${pending.description || pending.senderName || 'expense'}`
+    );
+    if (needsReview > 0) lines.push(`${needsReview} item(s) need review in the Inbox`);
+    await sendPush(
+      autoApproved.length > 0
+        ? `Rental Tracker: ${autoApproved.length} transaction(s) recorded automatically`
+        : 'Rental Tracker: new items need review',
+      lines.join('\n').slice(0, 800),
+      { priority: 'default', tags: 'moneybag' }
+    );
+  }
+
+  if (status === 'partial') {
+    await sendPush(
+      'Rental Tracker: scan completed with errors',
+      `${results.errors.length} error(s) — unprocessed emails will be retried next scan.\nFirst: ${results.errors[0]}`.slice(0, 500),
+      { priority: 'high', tags: 'warning' }
+    );
+  }
+
+  return results;
+}
+
+module.exports = { scanGmailWithAI, findExistingInDB, analyzeWithClaude, buildSystemPrompt };

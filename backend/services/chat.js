@@ -89,6 +89,20 @@ const TOOLS = [
       required: ['paymentId'],
     },
   },
+  {
+    name: 'add_sender_rule',
+    description: 'Teach the Gmail scanner about an e-Transfer sender. Use kind "alias" when someone other than the tenant pays the rent (e.g. a spouse) — maps the sender name to the tenant. Use kind "skip" for outgoing e-Transfer recipients that are personal and should never be recorded as property expenses.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        kind: { type: 'string', enum: ['alias', 'skip'], description: '"alias" maps a sender to a tenant; "skip" ignores an outgoing recipient' },
+        senderName: { type: 'string', description: 'Name exactly as it appears in the Interac e-Transfer email' },
+        tenantName: { type: 'string', description: 'The tenant these payments belong to (required for kind "alias")' },
+        notes: { type: 'string', description: 'Optional short note about why' },
+      },
+      required: ['kind', 'senderName'],
+    },
+  },
 ];
 
 async function buildDataContext(prisma) {
@@ -255,6 +269,23 @@ async function executeAction(prisma, action) {
       return { success: true, message: `Payment deleted (${input.paymentId})` };
     }
 
+    case 'add_sender_rule': {
+      if (input.kind === 'alias') {
+        const tenant = await prisma.tenant.findFirst({
+          where: { name: { contains: input.tenantName || '', mode: 'insensitive' }, deletedAt: null },
+        });
+        if (!tenant) throw new Error(`Tenant "${input.tenantName}" not found`);
+        const rule = await prisma.senderRule.create({
+          data: { kind: 'alias', senderName: input.senderName, tenantName: tenant.name, notes: input.notes || null, updatedAt: new Date() },
+        });
+        return { success: true, message: `Scanner will now match e-Transfers from "${input.senderName}" to tenant ${tenant.name}`, id: rule.id };
+      }
+      const rule = await prisma.senderRule.create({
+        data: { kind: 'skip', senderName: input.senderName, notes: input.notes || null, updatedAt: new Date() },
+      });
+      return { success: true, message: `Scanner will now ignore outgoing e-Transfers to "${input.senderName}"`, id: rule.id };
+    }
+
     default:
       throw new Error(`Unknown action: ${toolName}`);
   }
@@ -281,6 +312,10 @@ function describeAction(toolName, input) {
       return `Delete expense (ID: ${input.expenseId})`;
     case 'delete_payment':
       return `Delete payment (ID: ${input.paymentId})`;
+    case 'add_sender_rule':
+      return input.kind === 'alias'
+        ? `Teach scanner: e-Transfers from **${input.senderName}** are rent for tenant **${input.tenantName}**`
+        : `Teach scanner: ignore outgoing e-Transfers to **${input.senderName}**${input.notes ? ` (${input.notes})` : ''}`;
     default:
       return `${toolName}: ${JSON.stringify(input)}`;
   }
@@ -291,7 +326,7 @@ async function chat(prisma, message, conversationHistory = []) {
   const context = await buildDataContext(prisma);
 
   const response = await client.messages.create({
-    model: 'claude-sonnet-4-20250514',
+    model: 'claude-sonnet-5',
     max_tokens: 1024,
     system: context,
     tools: TOOLS,
@@ -347,7 +382,7 @@ async function confirmAction(prisma, action, conversationHistory) {
   const context = await buildDataContext(prisma);
 
   const response = await client.messages.create({
-    model: 'claude-sonnet-4-20250514',
+    model: 'claude-sonnet-5',
     max_tokens: 512,
     system: context,
     tools: TOOLS,

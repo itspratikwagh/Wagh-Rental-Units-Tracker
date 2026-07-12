@@ -91,6 +91,9 @@ model PendingTransaction {
   matchConfidence String    // "high", "medium", "none"
   rawEmailSnippet String?
   status          String    @default("pending") // "pending", "approved", "rejected"
+  autoApproved    Boolean   @default(false)
+  createdRecordType String? // "payment" | "expense" — set on approval, used for undo
+  createdRecordId   String?
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @updatedAt
   reviewedAt      DateTime?
@@ -125,4 +128,32 @@ model ScannedEmail {
   id             String   @id @default(uuid())
   gmailMessageId String   @unique
   scannedAt      DateTime @default(now())
+}
+
+// Teachable sender rules — replaces hard-coded alias maps and skip lists.
+// kind "alias": Interac sender name -> tenant name (e.g. spouse pays the rent)
+// kind "skip":  outgoing Interac recipients that are personal, not property expenses
+model SenderRule {
+  id         String   @id @default(uuid())
+  kind       String   // "alias" | "skip"
+  senderName String
+  tenantName String?  // for kind "alias": the tenant this sender pays for
+  notes      String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+}
+
+model ScanRun {
+  id           String    @id @default(uuid())
+  startedAt    DateTime  @default(now())
+  finishedAt   DateTime?
+  trigger      String    @default("manual") // "manual" | "cron"
+  status       String    @default("running") // "running" | "success" | "partial" | "failed"
+  totalFetched Int       @default(0)
+  newEmails    Int       @default(0)
+  payments     Int       @default(0)
+  expenses     Int       @default(0)
+  autoRejected Int       @default(0)
+  autoApproved Int       @default(0)
+  errors       String?
 }

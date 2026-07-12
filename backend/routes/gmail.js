@@ -1,7 +1,8 @@
 const express = require('express');
 const router = express.Router();
-const { getAuthUrl, exchangeCode, getRentMonth } = require('../services/gmail');
+const { getAuthUrl, exchangeCode } = require('../services/gmail');
 const { scanGmailWithAI } = require('../services/gmailAiScanner');
+const { approveTransaction, undoApproval } = require('../services/approval');
 
 module.exports = function (prisma) {
   // Start OAuth2 flow
@@ -47,16 +48,44 @@ module.exports = function (prisma) {
     }
   });
 
-  // Check Gmail connection status
+  // Check Gmail connection status (includes last scan outcome for the UI banner)
   router.get('/status', async (req, res) => {
     try {
-      const syncState = await prisma.gmailSyncState.findFirst();
+      const [syncState, lastScan] = await Promise.all([
+        prisma.gmailSyncState.findFirst(),
+        prisma.scanRun.findFirst({ orderBy: { startedAt: 'desc' } }),
+      ]);
       res.json({
         connected: !!syncState?.refreshToken,
         lastSyncAt: syncState?.lastSyncAt || null,
+        lastScan: lastScan
+          ? {
+              startedAt: lastScan.startedAt,
+              finishedAt: lastScan.finishedAt,
+              trigger: lastScan.trigger,
+              status: lastScan.status,
+              payments: lastScan.payments,
+              expenses: lastScan.expenses,
+              autoApproved: lastScan.autoApproved,
+              errors: lastScan.errors,
+            }
+          : null,
       });
     } catch (error) {
       res.status(500).json({ error: 'Failed to check Gmail status' });
+    }
+  });
+
+  // Scan history (most recent first)
+  router.get('/scan-history', async (req, res) => {
+    try {
+      const runs = await prisma.scanRun.findMany({
+        orderBy: { startedAt: 'desc' },
+        take: 30,
+      });
+      res.json(runs);
+    } catch (error) {
+      res.status(500).json({ error: 'Failed to fetch scan history' });
     }
   });
 
@@ -91,7 +120,8 @@ module.exports = function (prisma) {
       if (results.payments) parts.push(`${results.payments} payment(s)`);
       if (results.expenses) parts.push(`${results.expenses} expense(s)`);
       const summary = parts.length > 0 ? parts.join(', ') : 'no new items';
-      const autoRej = results.autoRejected ? ` (${results.autoRejected} auto-rejected as duplicates)` : '';
+      let autoRej = results.autoApproved ? ` ${results.autoApproved} auto-approved and recorded.` : '';
+      if (results.autoRejected) autoRej += ` (${results.autoRejected} auto-rejected as duplicates)`;
 
       const log = results.scanLog || {};
       res.json({
@@ -135,94 +165,29 @@ module.exports = function (prisma) {
         return res.status(400).json({ error: `Transaction already ${pending.status}` });
       }
 
-      const amount = overrides.amount != null ? parseFloat(overrides.amount) : pending.amount;
-      const isAirbnb = (pending.senderName || '').toLowerCase().includes('airbnb');
-      // For rent payments, snap to 1st of rent month; for Airbnb payouts, keep actual date
-      let date;
-      if (overrides.date) {
-        date = new Date(overrides.date);
-      } else if (pending.type === 'payment' && !isAirbnb) {
-        date = getRentMonth(pending.date);
-      } else {
-        date = pending.date;
-      }
-
-      let created;
-
-      if (pending.type === 'payment') {
-        const tenantId = overrides.tenantId || pending.tenantId;
-        if (!tenantId) {
-          return res.status(400).json({ error: 'Tenant must be selected before approving a payment' });
-        }
-
-        // Check for existing pending payment for this tenant/month to update instead
-        const monthStart = new Date(date.getFullYear(), date.getMonth(), 1);
-        const monthEnd = new Date(date.getFullYear(), date.getMonth() + 1, 0, 23, 59, 59);
-
-        const existingPending = await prisma.payment.findFirst({
-          where: {
-            tenantId,
-            status: 'pending',
-            date: { gte: monthStart, lte: monthEnd },
-          },
-        });
-
-        if (existingPending) {
-          // Update existing pending payment to completed
-          created = await prisma.payment.update({
-            where: { id: existingPending.id },
-            data: {
-              amount,
-              date,
-              status: 'completed',
-              paymentMethod: 'e-transfer',
-              notes: overrides.notes || `Auto-detected from Interac e-Transfer`,
-            },
-            include: { Tenant: true },
-          });
-        } else {
-          created = await prisma.payment.create({
-            data: {
-              tenantId,
-              amount,
-              date,
-              paymentMethod: 'e-transfer',
-              status: 'completed',
-              notes: overrides.notes || `Auto-detected from Interac e-Transfer`,
-              updatedAt: new Date(),
-            },
-            include: { Tenant: true },
-          });
-        }
-      } else {
-        // Expense
-        const propertyId = overrides.propertyId || pending.propertyId;
-        if (!propertyId) {
-          return res.status(400).json({ error: 'Property must be selected before approving an expense' });
-        }
-
-        created = await prisma.expense.create({
-          data: {
-            amount,
-            date,
-            category: overrides.category || pending.category || 'Utility Bills',
-            description: overrides.description || pending.description || 'Utility bill',
-            propertyId,
-            updatedAt: new Date(),
-          },
-        });
-      }
-
-      // Mark as approved
-      await prisma.pendingTransaction.update({
-        where: { id },
-        data: { status: 'approved', reviewedAt: new Date() },
-      });
-
-      res.json({ message: 'Transaction approved', record: created });
+      const { record } = await approveTransaction(prisma, pending, overrides);
+      res.json({ message: 'Transaction approved', record });
     } catch (error) {
       console.error('Approve error:', error);
+      if (/must be selected/.test(error.message)) {
+        return res.status(400).json({ error: error.message });
+      }
       res.status(500).json({ error: 'Failed to approve transaction' });
+    }
+  });
+
+  // Undo an approval (manual or auto) — reverts the created record and
+  // returns the item to the pending queue
+  router.post('/pending/:id/undo', async (req, res) => {
+    try {
+      const pending = await prisma.pendingTransaction.findUnique({ where: { id: req.params.id } });
+      if (!pending) return res.status(404).json({ error: 'Transaction not found' });
+
+      await undoApproval(prisma, pending);
+      res.json({ message: 'Approval undone — transaction returned to pending' });
+    } catch (error) {
+      console.error('Undo error:', error);
+      res.status(400).json({ error: error.message || 'Failed to undo approval' });
     }
   });
 
@@ -256,68 +221,14 @@ module.exports = function (prisma) {
 
       for (const pending of highConfidence) {
         try {
-          const amount = pending.amount;
-          const isAirbnb = (pending.senderName || '').toLowerCase().includes('airbnb');
-          const date = (pending.type === 'payment' && !isAirbnb)
-            ? getRentMonth(pending.date)
-            : pending.date;
-
-          if (pending.type === 'payment' && pending.tenantId) {
-            const monthStart = new Date(date.getFullYear(), date.getMonth(), 1);
-            const monthEnd = new Date(date.getFullYear(), date.getMonth() + 1, 0, 23, 59, 59);
-
-            const existingPending = await prisma.payment.findFirst({
-              where: {
-                tenantId: pending.tenantId,
-                status: 'pending',
-                date: { gte: monthStart, lte: monthEnd },
-              },
-            });
-
-            if (existingPending) {
-              await prisma.payment.update({
-                where: { id: existingPending.id },
-                data: {
-                  amount,
-                  date,
-                  status: 'completed',
-                  paymentMethod: 'e-transfer',
-                  notes: 'Auto-detected from Interac e-Transfer',
-                },
-              });
-            } else {
-              await prisma.payment.create({
-                data: {
-                  tenantId: pending.tenantId,
-                  amount,
-                  date,
-                  paymentMethod: 'e-transfer',
-                  status: 'completed',
-                  notes: 'Auto-detected from Interac e-Transfer',
-                  updatedAt: new Date(),
-                },
-              });
-            }
-          } else if (pending.type === 'expense' && pending.propertyId) {
-            await prisma.expense.create({
-              data: {
-                amount,
-                date,
-                category: pending.category || 'Utility Bills',
-                description: pending.description || 'Utility bill',
-                propertyId: pending.propertyId,
-                updatedAt: new Date(),
-              },
-            });
-          } else {
+          if (
+            (pending.type === 'payment' && !pending.tenantId) ||
+            (pending.type === 'expense' && !pending.propertyId)
+          ) {
             errors.push(`${pending.id}: missing required fields`);
             continue;
           }
-
-          await prisma.pendingTransaction.update({
-            where: { id: pending.id },
-            data: { status: 'approved', reviewedAt: new Date() },
-          });
+          await approveTransaction(prisma, pending);
           approved++;
         } catch (err) {
           errors.push(`${pending.id}: ${err.message}`);

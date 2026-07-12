@@ -10,6 +10,7 @@ import CancelIcon from '@mui/icons-material/Cancel';
 import EditIcon from '@mui/icons-material/Edit';
 import SyncIcon from '@mui/icons-material/Sync';
 import LinkIcon from '@mui/icons-material/Link';
+import UndoIcon from '@mui/icons-material/Undo';
 import config, { EXPENSE_CATEGORIES } from '../config';
 
 const API = config.apiUrl;
@@ -79,6 +80,17 @@ export default function Inbox() {
       fetchData();
     } catch (err) {
       console.error('Approve failed:', err);
+    }
+  };
+
+  const handleUndo = async (id) => {
+    try {
+      const res = await fetch(`${API}/api/gmail/pending/${id}/undo`, { method: 'POST' });
+      const data = await res.json();
+      setScanResult(res.ok ? { message: data.message } : { error: data.error });
+      fetchData();
+    } catch (err) {
+      console.error('Undo failed:', err);
     }
   };
 
@@ -165,13 +177,28 @@ export default function Inbox() {
               variant="contained"
               color="secondary"
               startIcon={<LinkIcon />}
-              href={`${API}/api/gmail/auth`}
+              href={`${API}/api/gmail/auth${config.apiKey ? `?key=${encodeURIComponent(config.apiKey)}` : ''}`}
             >
               Connect Gmail
             </Button>
           )}
         </Box>
       </Box>
+
+      {!gmailStatus.connected && (
+        <Alert severity="warning" sx={{ mb: 2 }}>
+          Gmail is disconnected — automatic scanning is paused. Click "Connect Gmail" to re-authorize.
+        </Alert>
+      )}
+
+      {gmailStatus.connected && (gmailStatus.lastScan?.status === 'failed' || gmailStatus.lastScan?.status === 'partial') && (
+        <Alert severity={gmailStatus.lastScan.status === 'failed' ? 'error' : 'warning'} sx={{ mb: 2 }}>
+          Last scan ({new Date(gmailStatus.lastScan.startedAt).toLocaleString()}, {gmailStatus.lastScan.trigger}){' '}
+          {gmailStatus.lastScan.status === 'failed' ? 'failed' : 'completed with errors'}
+          {gmailStatus.lastScan.errors ? `: ${gmailStatus.lastScan.errors.split('\n')[0]}` : '.'}{' '}
+          Unprocessed emails are retried automatically on the next scan.
+        </Alert>
+      )}
 
       {scanResult && (
         <Alert severity={scanResult.error ? 'error' : 'success'} sx={{ mb: 2 }} onClose={() => setScanResult(null)}>
@@ -207,7 +234,7 @@ export default function Inbox() {
                 <TableCell align="right">Amount</TableCell>
                 <TableCell>Matched To</TableCell>
                 <TableCell>Confidence</TableCell>
-                {tab === 'pending' && <TableCell align="center">Actions</TableCell>}
+                {(tab === 'pending' || tab === 'approved') && <TableCell align="center">Actions</TableCell>}
               </TableRow>
             </TableHead>
             <TableBody>
@@ -248,6 +275,11 @@ export default function Inbox() {
                   </TableCell>
                   <TableCell>
                     <Chip label={item.matchConfidence} color={confidenceColor(item.matchConfidence)} size="small" />
+                    {item.autoApproved && (
+                      <Tooltip title="Approved automatically by the scanner">
+                        <Chip label="Auto" size="small" variant="outlined" sx={{ ml: 0.5 }} />
+                      </Tooltip>
+                    )}
                   </TableCell>
                   {tab === 'pending' && (
                     <TableCell align="center">
@@ -277,6 +309,19 @@ export default function Inbox() {
                           <CancelIcon fontSize="small" />
                         </IconButton>
                       </Tooltip>
+                    </TableCell>
+                  )}
+                  {tab === 'approved' && (
+                    <TableCell align="center">
+                      {item.createdRecordId ? (
+                        <Tooltip title="Undo — remove the created record and return to pending">
+                          <IconButton size="small" onClick={() => handleUndo(item.id)}>
+                            <UndoIcon fontSize="small" />
+                          </IconButton>
+                        </Tooltip>
+                      ) : (
+                        <Typography variant="caption" color="text.secondary">—</Typography>
+                      )}
                     </TableCell>
                   )}
                 </TableRow>

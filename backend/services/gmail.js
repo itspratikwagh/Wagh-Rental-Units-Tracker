@@ -212,12 +212,21 @@ function parseOutgoingInteracEmail(headers, bodyText) {
   return { recipientName, amount, date, note };
 }
 
-// Known outgoing Interac recipients to SKIP (not property expenses)
-const OUTGOING_INTERAC_SKIP = [
-  /kraken/i,          // Crypto exchange
-  /sandip\s+das/i,    // Personal loan
-  /evelyn\s+ackah/i,  // Immigration lawyer
-];
+// Sender rules (aliases + skip list) now live in the SenderRule table so new
+// ones can be added without code changes. These helpers load them per scan.
+async function getSenderRules(prisma) {
+  const rules = await prisma.senderRule.findMany();
+  return {
+    aliases: rules.filter(r => r.kind === 'alias'),
+    skips: rules.filter(r => r.kind === 'skip'),
+  };
+}
+
+function isSkippedRecipient(skipRules, name) {
+  if (!name) return false;
+  const normalized = name.toLowerCase();
+  return skipRules.some(r => normalized.includes(r.senderName.toLowerCase().trim()));
+}
 
 // Parse utility bill email
 function parseUtilityEmail(headers, bodyText, parser) {
@@ -242,15 +251,6 @@ function parseUtilityEmail(headers, bodyText, parser) {
   };
 }
 
-// Alias map: Interac sender names that should map to a specific tenant.
-// Key = lowercase sender name, Value = tenant name in DB (lowercase).
-const SENDER_ALIASES = {
-  'savannah hummel': 'justin sox',
-  'godwin antepim': 'eunice frimpomaa',
-  'godwin kofi antepim': 'eunice frimpomaa',
-  'parveen simplii': 'parveen kumar',
-};
-
 // Match sender name to a tenant
 async function matchTenant(prisma, senderName) {
   if (!senderName) return { tenantId: null, confidence: 'none' };
@@ -259,10 +259,13 @@ async function matchTenant(prisma, senderName) {
   const tenants = await prisma.tenant.findMany({ where: { deletedAt: null } });
   let normalized = senderName.toLowerCase().trim();
 
-  // Check alias map first
-  const aliasTarget = SENDER_ALIASES[normalized];
-  if (aliasTarget) {
-    const aliased = tenants.find(t => t.name.toLowerCase().trim() === aliasTarget);
+  // Check DB alias rules first (sender name -> tenant name)
+  const aliasRules = await prisma.senderRule.findMany({ where: { kind: 'alias' } });
+  const aliasRule = aliasRules.find(r => r.senderName.toLowerCase().trim() === normalized);
+  if (aliasRule?.tenantName) {
+    const aliased = tenants.find(
+      t => t.name.toLowerCase().trim() === aliasRule.tenantName.toLowerCase().trim()
+    );
     if (aliased) return { tenantId: aliased.id, confidence: 'high' };
   }
 
@@ -522,6 +525,7 @@ async function scanGmail(prisma, options = {}) {
 
   // Scan for outgoing Interac e-Transfers (expenses paid via e-Transfer)
   try {
+    const { skips: skipRules } = await getSenderRules(prisma);
     const outgoingQuery = `from:payments.interac.ca (subject:"transfer to" OR subject:"sent" subject:"money") ${afterClause} in:anywhere`;
     let allOutgoingMessages = [];
     let outgoingPageToken = null;
@@ -556,8 +560,8 @@ async function scanGmail(prisma, options = {}) {
 
         if (!parsed.amount) continue;
 
-        // Skip known non-property recipients
-        if (parsed.recipientName && OUTGOING_INTERAC_SKIP.some(re => re.test(parsed.recipientName))) {
+        // Skip known non-property recipients (SenderRule kind "skip")
+        if (isSkippedRecipient(skipRules, parsed.recipientName)) {
           continue;
         }
 
@@ -766,5 +770,6 @@ module.exports = {
   scanGmail,
   getRentMonth,
   buildAfterClause,
+  getSenderRules,
   UTILITY_PARSERS,
 };
