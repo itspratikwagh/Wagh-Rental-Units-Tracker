@@ -132,9 +132,48 @@ async function undoApproval(prisma, pending) {
   });
 }
 
+// Check whether a pending transaction already has a matching real record —
+// used to stop auto-approve from double-recording things entered manually.
+// Payments: a completed payment for the same tenant in the same rent month.
+// Expenses: same amount within ±3 days.
+async function hasExistingRecord(prisma, pending) {
+  if (pending.type === 'payment' && pending.tenantId) {
+    const rentMonth = getRentMonth(pending.date);
+    const monthStart = new Date(rentMonth.getFullYear(), rentMonth.getMonth(), 1);
+    const monthEnd = new Date(rentMonth.getFullYear(), rentMonth.getMonth() + 1, 0, 23, 59, 59);
+    const existing = await prisma.payment.findFirst({
+      where: {
+        tenantId: pending.tenantId,
+        status: 'completed',
+        deletedAt: null,
+        date: { gte: monthStart, lte: monthEnd },
+      },
+    });
+    return !!existing;
+  }
+
+  if (pending.type === 'expense') {
+    const threeDaysMs = 3 * 24 * 60 * 60 * 1000;
+    const txDate = new Date(pending.date);
+    const nearby = await prisma.expense.findMany({
+      where: {
+        deletedAt: null,
+        date: {
+          gte: new Date(txDate.getTime() - threeDaysMs),
+          lte: new Date(txDate.getTime() + threeDaysMs),
+        },
+      },
+    });
+    return nearby.some(e => Math.abs(e.amount - pending.amount) < 0.02);
+  }
+
+  return false;
+}
+
 // Auto-approve high-confidence transactions created since `since` (i.e. by the
 // current scan — never touches older items the user may have deliberately left).
-// Requirements: high confidence, positive amount, and tenant/property resolved.
+// Requirements: high confidence, positive amount, tenant/property resolved, and
+// no matching record already in the books (those stay pending for review).
 async function autoApproveHighConfidence(prisma, since) {
   const candidates = await prisma.pendingTransaction.findMany({
     where: {
@@ -147,11 +186,16 @@ async function autoApproveHighConfidence(prisma, since) {
 
   const approved = [];
   const errors = [];
+  let skippedAsPossibleDuplicate = 0;
 
   for (const pending of candidates) {
     if (pending.type === 'payment' && !pending.tenantId) continue;
     if (pending.type === 'expense' && !pending.propertyId) continue;
     try {
+      if (await hasExistingRecord(prisma, pending)) {
+        skippedAsPossibleDuplicate++;
+        continue; // stays pending — user decides if it's a duplicate or a second payment
+      }
       const { record } = await approveTransaction(prisma, pending, {}, { auto: true });
       approved.push({ pending, record });
     } catch (err) {
@@ -159,7 +203,7 @@ async function autoApproveHighConfidence(prisma, since) {
     }
   }
 
-  return { approved, errors };
+  return { approved, errors, skippedAsPossibleDuplicate };
 }
 
 module.exports = { approveTransaction, undoApproval, autoApproveHighConfidence };

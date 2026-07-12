@@ -72,7 +72,8 @@ CLASSIFICATION RULES:
 - Utility bills (Enmax/Easymax, EPCOR, Shaw) = EXPENSE. Map Enmax to Calgary property, EPCOR to Edmonton property. Shaw: look for account numbers 099-0137-3821 (Edmonton) or 099-0203-0540 (Calgary).
 - Amazon.ca order confirmations = EXPENSE (Home Improvement category). Look for delivery city (Calgary or Edmonton) to map to property.
 - Insurance bills, mortgage statements, property tax notices = EXPENSE.
-- IGNORE: personal emails, newsletters, social media notifications, job-related emails, marketing, subscriptions unrelated to properties, crypto exchanges, personal banking alerts, spam, login/security alerts.
+- IGNORE only clear noise: newsletters, social media notifications, job-related emails, marketing/promotions without an actual purchase, crypto exchanges, spam, login/security alerts.
+- WHEN IN DOUBT, INCLUDE: any other email showing an actual dollar amount paid or received (bills, receipts, invoices, bank or e-Transfer notices, insurance, taxes, paid contractor work, service charges) should be returned as a transaction even if you are not sure it relates to the rental properties — use matchConfidence "medium" or "none" to flag uncertainty. It is better to surface a borderline item for human review than to silently drop it. Only high-confidence items are recorded automatically; everything else goes to a review queue.
 
 RENT MONTH RULE: If payment date is after the 15th, it counts toward NEXT month's rent. Otherwise it's current month's rent.
 
