@@ -38,7 +38,7 @@ const Tenants = () => {
   const [editOpen, setEditOpen] = useState(false);
   const [editingTenant, setEditingTenant] = useState(null);
   const [error, setError] = useState(null);
-  const [statusFilter, setStatusFilter] = useState('all');
+  const [statusFilter, setStatusFilter] = useState('current');
   const [propertyFilter, setPropertyFilter] = useState('all');
   const [newTenant, setNewTenant] = useState({
     name: '',
@@ -291,6 +291,17 @@ const Tenants = () => {
     return filtered.sort((a, b) => a.name.localeCompare(b.name));
   };
 
+  // Days until (or since) a lease ends, with a human-readable label + color
+  const getLeaseCountdown = (leaseEnd) => {
+    const days = Math.ceil((new Date(leaseEnd) - new Date()) / 86400000);
+    if (days < 0) return { text: `ended ${Math.abs(days)} day${Math.abs(days) === 1 ? '' : 's'} ago`, color: 'text.disabled' };
+    if (days === 0) return { text: 'ends today', color: 'error.main' };
+    const text = `${days} day${days === 1 ? '' : 's'} left`;
+    if (days <= 30) return { text, color: 'error.main' };
+    if (days <= 90) return { text, color: 'warning.main' };
+    return { text, color: 'success.main' };
+  };
+
   const getStatusChipColor = (isArchived) => {
     return isArchived ? 'default' : 'success';
   };
@@ -399,6 +410,9 @@ const Tenants = () => {
                   </Typography>
                   <Typography variant="body2">
                     Lease: {new Date(tenant.leaseStart).toLocaleDateString()} - {new Date(tenant.leaseEnd).toLocaleDateString()}
+                  </Typography>
+                  <Typography variant="body2" sx={{ color: getLeaseCountdown(tenant.leaseEnd).color, fontWeight: 500 }}>
+                    {getLeaseCountdown(tenant.leaseEnd).text}
                   </Typography>
                 </CardContent>
                 <CardActions>
