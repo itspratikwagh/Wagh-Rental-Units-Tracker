@@ -59,6 +59,19 @@ const TOOLS = [
     },
   },
   {
+    name: 'record_deposit',
+    description: 'Record a security deposit payment from a tenant, or set the total deposit required. Use when the user says a tenant paid (part of) their deposit. Deposits are held in trust and tracked separately from rent income.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        tenantName: { type: 'string', description: 'Tenant name as it appears in the system' },
+        amount: { type: 'number', description: 'Deposit payment amount received now, in CAD (adds to what they have already paid)' },
+        depositRequired: { type: 'number', description: 'Total deposit required for this tenant, in CAD. Only set this to establish or correct the required total.' },
+      },
+      required: ['tenantName'],
+    },
+  },
+  {
     name: 'update_tenant',
     description: 'Update tenant details like rent amount, lease dates, email, or phone.',
     input_schema: {
@@ -272,6 +285,32 @@ async function executeAction(prisma, action) {
       };
     }
 
+    case 'record_deposit': {
+      const tenant = await prisma.tenant.findFirst({
+        where: { name: { contains: input.tenantName, mode: 'insensitive' }, deletedAt: null },
+      });
+      if (!tenant) throw new Error(`Tenant "${input.tenantName}" not found`);
+      if (input.amount == null && input.depositRequired == null) {
+        throw new Error('Provide a payment amount and/or the total deposit required');
+      }
+
+      const data = { updatedAt: new Date() };
+      if (input.depositRequired != null) data.depositRequired = input.depositRequired;
+      if (input.amount != null) data.depositPaid = (tenant.depositPaid || 0) + input.amount;
+
+      const updated = await prisma.tenant.update({ where: { id: tenant.id }, data });
+      const required = input.depositRequired != null ? input.depositRequired : (tenant.depositRequired || 0);
+      const paid = updated.depositPaid || 0;
+      const outstanding = Math.max(0, required - paid);
+      const parts = [];
+      if (input.amount != null) parts.push(`Recorded $${input.amount.toFixed(2)} deposit payment from ${tenant.name}`);
+      if (input.depositRequired != null) parts.push(`deposit required set to $${input.depositRequired.toFixed(2)}`);
+      const status = required > 0
+        ? (outstanding > 0 ? `$${paid.toFixed(2)} of $${required.toFixed(2)} collected — $${outstanding.toFixed(2)} outstanding` : `deposit paid in full ($${paid.toFixed(2)})`)
+        : `$${paid.toFixed(2)} collected`;
+      return { success: true, message: `${parts.join('; ')}. ${status}.` };
+    }
+
     case 'update_tenant': {
       const tenant = await prisma.tenant.findFirst({
         where: { name: { contains: input.tenantName, mode: 'insensitive' }, deletedAt: null },
@@ -347,6 +386,12 @@ function describeAction(toolName, input) {
       return `Record payment: **$${input.amount.toFixed(2)}** from ${input.tenantName} on ${input.date}${input.paymentMethod ? ` via ${input.paymentMethod}` : ''}${input.notes ? ` (${input.notes})` : ''}`;
     case 'create_tenant':
       return `Add tenant **${input.name}** to ${input.propertyName} — $${input.rentAmount.toFixed(2)}/mo, lease ${input.leaseStart} → ${input.leaseEnd}${input.email ? `, ${input.email}` : ''}`;
+    case 'record_deposit': {
+      const parts = [];
+      if (input.amount != null) parts.push(`Record **$${input.amount.toFixed(2)}** deposit payment from ${input.tenantName}`);
+      if (input.depositRequired != null) parts.push(`set deposit required to **$${input.depositRequired.toFixed(2)}**`);
+      return parts.join('; ') || `Update deposit for ${input.tenantName}`;
+    }
     case 'update_tenant': {
       const changes = [];
       if (input.rentAmount != null) changes.push(`rent → $${input.rentAmount}`);
