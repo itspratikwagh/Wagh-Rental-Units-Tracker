@@ -403,7 +403,7 @@ const Tenants = () => {
                     Phone: {tenant.phone}
                   </Typography>
                   <Typography variant="body2">
-                    Property: {tenant.property?.name}
+                    Property: {tenant.Property?.name}
                   </Typography>
                   <Typography variant="body2">
                     Rent: ${tenant.rentAmount}
