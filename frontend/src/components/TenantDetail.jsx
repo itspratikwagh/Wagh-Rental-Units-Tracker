@@ -4,6 +4,7 @@ import {
   Typography, Box, Button, Card, CardContent, Chip, IconButton, Table,
   TableBody, TableCell, TableContainer, TableHead, TableRow, Select,
   MenuItem, FormControl, InputLabel, Alert, CircularProgress, Tooltip, Grid,
+  LinearProgress,
 } from '@mui/material';
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import UploadFileIcon from '@mui/icons-material/UploadFile';
@@ -109,6 +110,38 @@ export default function TenantDetail() {
     }
   };
 
+  // Deposit is money held in trust — tracked on the tenant, separate from rent income
+  const saveDeposit = async (patch) => {
+    try {
+      const res = await fetch(`${API}/api/tenants/${id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(patch),
+      });
+      if (!res.ok) throw new Error('Failed to update deposit');
+      setNotice({ severity: 'success', text: 'Deposit updated' });
+      fetchData();
+    } catch (err) {
+      setNotice({ severity: 'error', text: err.message });
+    }
+  };
+
+  const handleRecordDepositPayment = () => {
+    const input = window.prompt('Deposit payment amount received ($):');
+    if (input == null) return;
+    const amt = parseFloat(input);
+    if (isNaN(amt) || amt <= 0) { setNotice({ severity: 'error', text: 'Enter a valid amount' }); return; }
+    saveDeposit({ depositPaid: (tenant.depositPaid || 0) + amt });
+  };
+
+  const handleSetDepositRequired = () => {
+    const input = window.prompt('Total security deposit required ($):', tenant.depositRequired || '');
+    if (input == null) return;
+    const amt = parseFloat(input);
+    if (isNaN(amt) || amt < 0) { setNotice({ severity: 'error', text: 'Enter a valid amount' }); return; }
+    saveDeposit({ depositRequired: amt });
+  };
+
   if (loading) return <Box sx={{ display: 'flex', justifyContent: 'center', p: 4 }}><CircularProgress /></Box>;
   if (error) {
     return (
@@ -127,6 +160,9 @@ export default function TenantDetail() {
         color: daysToLeaseEnd < 30 ? 'error' : daysToLeaseEnd < 90 ? 'warning' : 'success',
       };
   const payments = [...(tenant.Payment || [])].sort((a, b) => new Date(b.date) - new Date(a.date));
+  const depositRequired = tenant.depositRequired || 0;
+  const depositPaid = tenant.depositPaid || 0;
+  const depositOutstanding = Math.max(0, depositRequired - depositPaid);
 
   return (
     <Box>
@@ -161,6 +197,47 @@ export default function TenantDetail() {
               </Typography>
               <Typography variant="body2" sx={{ mb: 0.5 }}>Email: {tenant.email || '—'}</Typography>
               <Typography variant="body2">Phone: {tenant.phone || '—'}</Typography>
+            </CardContent>
+          </Card>
+
+          <Card sx={{ mt: 3 }}>
+            <CardContent>
+              <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
+                <Typography variant="h6">Security deposit</Typography>
+                {depositOutstanding > 0 ? (
+                  <Chip label={`${formatCurrency(depositOutstanding)} outstanding`} color="warning" size="small" />
+                ) : depositRequired > 0 ? (
+                  <Chip label="Paid in full" color="success" size="small" />
+                ) : null}
+              </Box>
+              {depositRequired > 0 ? (
+                <>
+                  <Typography variant="body2" sx={{ mb: 0.5 }}>
+                    {formatCurrency(depositPaid)} of {formatCurrency(depositRequired)} collected
+                  </Typography>
+                  <LinearProgress
+                    variant="determinate"
+                    value={Math.min(100, (depositPaid / depositRequired) * 100)}
+                    color={depositOutstanding > 0 ? 'warning' : 'success'}
+                    sx={{ height: 8, borderRadius: 4, mb: 1.5 }}
+                  />
+                </>
+              ) : (
+                <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
+                  No deposit amount set for this tenant.
+                </Typography>
+              )}
+              <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
+                <Button size="small" variant="outlined" onClick={handleRecordDepositPayment}>
+                  Record payment
+                </Button>
+                <Button size="small" onClick={handleSetDepositRequired}>
+                  {depositRequired > 0 ? 'Edit required amount' : 'Set required amount'}
+                </Button>
+              </Box>
+              <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1 }}>
+                Held in trust — not counted as rent income.
+              </Typography>
             </CardContent>
           </Card>
 

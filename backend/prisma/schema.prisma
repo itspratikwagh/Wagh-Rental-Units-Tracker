@@ -64,6 +64,8 @@ model Tenant {
   phone      String
   propertyId String
   rentAmount Float
+  depositRequired Float @default(0) // security deposit owed (money held in trust, not income)
+  depositPaid     Float @default(0) // portion of the deposit collected so far
   leaseStart DateTime
   leaseEnd   DateTime
   isArchived Boolean   @default(false)
