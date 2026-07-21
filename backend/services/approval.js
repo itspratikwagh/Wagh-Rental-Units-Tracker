@@ -22,10 +22,13 @@ async function approveTransaction(prisma, pending, overrides = {}, opts = {}) {
 
   let record;
   let recordType;
+  let resolvedTenantId = pending.tenantId;
+  let resolvedPropertyId = pending.propertyId;
 
   if (pending.type === 'payment') {
     const tenantId = overrides.tenantId || pending.tenantId;
     if (!tenantId) throw new Error('Tenant must be selected before approving a payment');
+    resolvedTenantId = tenantId;
 
     // If a pending (expected) payment already exists for this tenant/month,
     // complete it instead of creating a duplicate
@@ -65,6 +68,7 @@ async function approveTransaction(prisma, pending, overrides = {}, opts = {}) {
   } else {
     const propertyId = overrides.propertyId || pending.propertyId;
     if (!propertyId) throw new Error('Property must be selected before approving an expense');
+    resolvedPropertyId = propertyId;
 
     record = await prisma.expense.create({
       data: {
@@ -79,6 +83,9 @@ async function approveTransaction(prisma, pending, overrides = {}, opts = {}) {
     recordType = 'expense';
   }
 
+  // Write the RESOLVED values back onto the inbox row — without this, items
+  // approved with overrides (tenant/property picked in the review dialog)
+  // keep their original NULLs and show as "Unmatched" in the Approved tab.
   await prisma.pendingTransaction.update({
     where: { id: pending.id },
     data: {
@@ -87,6 +94,11 @@ async function approveTransaction(prisma, pending, overrides = {}, opts = {}) {
       autoApproved: !!opts.auto,
       createdRecordType: recordType,
       createdRecordId: record.id,
+      tenantId: resolvedTenantId,
+      propertyId: resolvedPropertyId,
+      amount,
+      category: overrides.category || pending.category,
+      description: overrides.description || pending.description,
     },
   });
 

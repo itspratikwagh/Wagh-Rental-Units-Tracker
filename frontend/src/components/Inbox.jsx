@@ -29,14 +29,15 @@ export default function Inbox() {
 
   const fetchData = useCallback(async () => {
     try {
-      const [pendingRes, tenantsRes, propsRes, statusRes] = await Promise.all([
+      const [pendingRes, tenantsRes, archivedRes, propsRes, statusRes] = await Promise.all([
         fetch(`${API}/api/gmail/pending?status=${tab}`),
         fetch(`${API}/api/tenants`),
+        fetch(`${API}/api/tenants?includeArchived=true`), // archived too, so old approvals show real names
         fetch(`${API}/api/properties`),
         fetch(`${API}/api/gmail/status`),
       ]);
       setPending(await pendingRes.json());
-      setTenants(await tenantsRes.json());
+      setTenants([...(await tenantsRes.json()), ...(await archivedRes.json())]);
       setProperties(await propsRes.json());
       setGmailStatus(await statusRes.json());
     } catch (err) {

@@ -73,6 +73,7 @@ CLASSIFICATION RULES:
 - Amazon.ca order confirmations = EXPENSE (Home Improvement category). Look for delivery city (Calgary or Edmonton) to map to property.
 - Insurance bills, mortgage statements, property tax notices = EXPENSE.
 - IGNORE only clear noise: newsletters, social media notifications, job-related emails, marketing/promotions without an actual purchase, crypto exchanges, spam, login/security alerts.
+- IGNORE shipping/delivery/tracking notifications ("Shipped:", "Delivered:", "Arriving today", "Out for delivery") — the ORDER CONFIRMATION email is the record of a purchase; a shipping notice for the same order is a duplicate, not a new expense.
 - WHEN IN DOUBT, INCLUDE: any other email showing an actual dollar amount paid or received (bills, receipts, invoices, bank or e-Transfer notices, insurance, taxes, paid contractor work, service charges) should be returned as a transaction even if you are not sure it relates to the rental properties — use matchConfidence "medium" or "none" to flag uncertainty. It is better to surface a borderline item for human review than to silently drop it. Only high-confidence items are recorded automatically; everything else goes to a review queue.
 
 RENT MONTH RULE: If payment date is after the 15th, it counts toward NEXT month's rent. Otherwise it's current month's rent.
@@ -137,9 +138,12 @@ const TRANSACTIONS_SCHEMA = {
   },
 };
 
-// Fetch all recent emails from Gmail
+// Fetch all recent emails from Gmail.
+// Shipping/delivery notifications are excluded at the query level — the order
+// confirmation email is the record of the expense; "Shipped:"/"Delivered:"
+// emails repeat the same purchase and were double-recording Amazon orders.
 async function fetchRecentEmails(gmail, prisma, afterClause, maxResults) {
-  const query = `${afterClause} -category:promotions -category:social -category:forums`;
+  const query = `${afterClause} -category:promotions -category:social -category:forums -from:shipment-tracking@amazon.ca -from:order-update@amazon.ca`;
 
   const allMessageIds = [];
   let pageToken = null;
