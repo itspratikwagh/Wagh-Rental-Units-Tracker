@@ -75,6 +75,7 @@ CLASSIFICATION RULES:
 - Insurance bills, mortgage statements, property tax notices = EXPENSE.
 - IGNORE only clear noise: newsletters, social media notifications, job-related emails, marketing/promotions without an actual purchase, crypto exchanges, spam, login/security alerts.
 - IGNORE shipping/delivery/tracking notifications ("Shipped:", "Delivered:", "Arriving today", "Out for delivery") — the ORDER CONFIRMATION email is the record of a purchase; a shipping notice for the same order is a duplicate, not a new expense.
+- ORDER TOTALS: for a multi-item order ("...and N more items"), the amount MUST be the full order total, never a single item's price. Amazon order emails show one "Total" PER SHIPMENT with no grand total — sum all shipment totals. Check the [AMOUNTS FROM LATER IN THIS EMAIL] section for totals beyond the preview.
 - WHEN IN DOUBT, INCLUDE: any other email showing an actual dollar amount paid or received (bills, receipts, invoices, bank or e-Transfer notices, insurance, taxes, paid contractor work, service charges) should be returned as a transaction even if you are not sure it relates to the rental properties — use matchConfidence "medium" or "none" to flag uncertainty. It is better to surface a borderline item for human review than to silently drop it. Only high-confidence items are recorded automatically; everything else goes to a review queue.
 
 RENT MONTH RULE: If payment date is after the 15th, it counts toward NEXT month's rent. Otherwise it's current month's rent.
@@ -216,8 +217,21 @@ async function fetchEmailBatch(gmail, messageIds) {
           .replace(/&[a-z#0-9]+;/gi, ' ')
           .replace(/\s+/g, ' ');
       }
-      // Truncate body to keep token usage manageable
-      bodyPreview = bodyPreview.substring(0, 800);
+      // Truncate body to keep token usage manageable — but receipts put their
+      // totals at the BOTTOM, so blind truncation systematically hid order
+      // totals and left only the first item's price. Append every price-bearing
+      // snippet from the truncated remainder so Claude always sees the totals.
+      const fullText = bodyPreview;
+      bodyPreview = fullText.substring(0, 800);
+      const rest = fullText.substring(800);
+      if (rest) {
+        const priceSnippets = [...rest.matchAll(/.{0,60}\$\s*[\d,]+\.\d{2}/g)]
+          .map(m => m[0].replace(/\s+/g, ' ').trim())
+          .slice(0, 12);
+        if (priceSnippets.length > 0) {
+          bodyPreview += `\n[AMOUNTS FROM LATER IN THIS EMAIL: ${priceSnippets.join(' | ')}]`;
+        }
+      }
 
       emails.push({
         gmailMessageId: id,

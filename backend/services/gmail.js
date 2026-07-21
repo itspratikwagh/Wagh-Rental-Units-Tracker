@@ -343,11 +343,15 @@ function parseAmazonEmail(headers, htmlBody) {
     .replace(/&[a-z#0-9]+;/gi, ' ')
     .replace(/\s+/g, ' ');
 
-  // Extract order total: "Total $XX.XX"
+  // Extract order total. Multi-item orders are grouped BY SHIPMENT and each
+  // shipment block ends with its own "Total $X" — there is no grand total in
+  // the email, so the order cost is the SUM of all shipment totals.
+  // (?<![a-z]) keeps "Subtotal" from matching.
   let amount = null;
-  const totalMatch = text.match(/Total\s+\$([\d,]+\.\d{2})/i);
-  if (totalMatch) {
-    amount = parseFloat(totalMatch[1].replace(/,/g, ''));
+  const totals = [...text.matchAll(/(?<![a-z])Total\s+\$([\d,]+\.\d{2})/gi)]
+    .map(m => parseFloat(m[1].replace(/,/g, '')));
+  if (totals.length > 0) {
+    amount = Math.round(totals.reduce((a, b) => a + b, 0) * 100) / 100;
   }
 
   // Extract city from "Pratik – Calgary, Alberta" or "Pratik – Edmonton, Alberta"
