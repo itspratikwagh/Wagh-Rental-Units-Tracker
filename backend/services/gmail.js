@@ -346,10 +346,15 @@ function parseAmazonEmail(headers, htmlBody) {
   // Extract order total. Multi-item orders are grouped BY SHIPMENT and each
   // shipment block ends with its own "Total $X" — there is no grand total in
   // the email, so the order cost is the SUM of all shipment totals.
-  // (?<![a-z]) keeps "Subtotal" from matching.
+  // (?<![a-z]) keeps "Subtotal" from matching. Some marketplace sellers bill
+  // in USD ("Total US$39.22") — capture those too, but flag them so the
+  // transaction is held for review instead of auto-approved (the CAD charge
+  // on the card differs from the USD figure).
   let amount = null;
-  const totals = [...text.matchAll(/(?<![a-z])Total\s+\$([\d,]+\.\d{2})/gi)]
-    .map(m => parseFloat(m[1].replace(/,/g, '')));
+  let billedInUSD = false;
+  const totalMatches = [...text.matchAll(/(?<![a-z])Total\s+(US\s*\$|CAD?\s*\$|CDN\s*\$|\$)\s*([\d,]+\.\d{2})/gi)];
+  const totals = totalMatches.map(m => parseFloat(m[2].replace(/,/g, '')));
+  if (totalMatches.some(m => /US/i.test(m[1]))) billedInUSD = true;
   if (totals.length > 0) {
     amount = Math.round(totals.reduce((a, b) => a + b, 0) * 100) / 100;
   }
@@ -376,7 +381,7 @@ function parseAmazonEmail(headers, htmlBody) {
 
   const date = dateStr ? new Date(dateStr) : new Date();
 
-  return { amount, city, itemName, date };
+  return { amount, city, itemName, date, billedInUSD };
 }
 
 // Get HTML body from email (Amazon emails are HTML-heavy)
@@ -655,10 +660,15 @@ async function scanGmail(prisma, options = {}) {
             senderEmail: 'auto-confirm@amazon.ca',
             amount: parsed.amount,
             date: parsed.date,
-            description: `${parsed.itemName} (Amazon)`,
+            description: parsed.billedInUSD
+              ? `${parsed.itemName} (Amazon — billed US$${parsed.amount}, verify CAD charge)`
+              : `${parsed.itemName} (Amazon)`,
             category: 'Home Improvement',
             propertyId,
-            matchConfidence: parsed.amount && propertyId ? 'high' : parsed.amount ? 'medium' : 'none',
+            // USD-billed orders are never auto-approved — the CAD card charge differs
+            matchConfidence: parsed.billedInUSD
+              ? 'none'
+              : parsed.amount && propertyId ? 'high' : parsed.amount ? 'medium' : 'none',
             rawEmailSnippet: full.data.snippet?.substring(0, 500),
           },
         });
