@@ -147,6 +147,7 @@ export default function Inbox() {
     utility_email: 'Utility Bill',
     amazon_email: 'Amazon Order',
     other_email: 'Other',
+    manual_receipt: 'Photo Receipt',
   };
   const getSourceLabel = (source) => sourceLabels[source] || source;
 
