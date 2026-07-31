@@ -65,7 +65,9 @@ const Expenses = () => {
     category: '',
     description: '',
     propertyId: '',
+    tenantId: '',
   });
+  const [airbnbTenants, setAirbnbTenants] = useState([]);
 
   // Pagination state
   const [page, setPage] = useState(0);
@@ -74,6 +76,7 @@ const Expenses = () => {
   useEffect(() => {
     fetchExpenses();
     fetchProperties();
+    fetchAirbnbTenants();
   }, []);
 
   const fetchExpenses = async () => {
@@ -101,6 +104,19 @@ const Expenses = () => {
     }
   };
 
+  const fetchAirbnbTenants = async () => {
+    try {
+      const [activeRes, archivedRes] = await Promise.all([
+        fetch(`${config.apiUrl}/api/tenants`),
+        fetch(`${config.apiUrl}/api/tenants?includeArchived=true`),
+      ]);
+      const all = [...(await activeRes.json()), ...(await archivedRes.json())];
+      setAirbnbTenants(all.filter(t => /airbnb/i.test(t.name)));
+    } catch (error) {
+      console.error('Error fetching tenants:', error);
+    }
+  };
+
   const handleOpen = () => setOpen(true);
   const handleClose = () => {
     setOpen(false);
@@ -110,6 +126,7 @@ const Expenses = () => {
       category: '',
       description: '',
       propertyId: '',
+      tenantId: '',
     });
   };
 
@@ -121,6 +138,7 @@ const Expenses = () => {
       category: expense.category,
       description: expense.description || '',
       propertyId: expense.propertyId,
+      tenantId: expense.tenantId || '',
     });
     setEditOpen(true);
   };
@@ -134,6 +152,7 @@ const Expenses = () => {
       category: '',
       description: '',
       propertyId: '',
+      tenantId: '',
     });
   };
 
@@ -762,6 +781,7 @@ const Expenses = () => {
           newExpense={newExpense}
           handleChange={handleChange}
           properties={properties}
+          airbnbTenants={airbnbTenants}
         />
 
         {/* Edit Expense Dialog */}
@@ -774,6 +794,7 @@ const Expenses = () => {
           newExpense={newExpense}
           handleChange={handleChange}
           properties={properties}
+          airbnbTenants={airbnbTenants}
         />
 
         {/* Delete Confirmation Dialog */}

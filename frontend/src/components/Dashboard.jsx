@@ -22,6 +22,7 @@ import Dialog from '@mui/material/Dialog';
 import DialogTitle from '@mui/material/DialogTitle';
 import DialogContent from '@mui/material/DialogContent';
 import DialogActions from '@mui/material/DialogActions';
+import Chip from '@mui/material/Chip';
 import EditIcon from '@mui/icons-material/Edit';
 import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
 import IconButton from '@mui/material/IconButton';
@@ -477,57 +478,119 @@ function Dashboard() {
         </DialogActions>
       </Dialog>
 
-      {/* Airbnb vs Long-Term Rent Section */}
-      {airbnbPL && airbnbPL.months.length > 0 && (
-        <Box sx={{ mt: 4 }}>
-          <Typography variant="h5" gutterBottom>
-            Airbnb vs Long-Term Rent
-          </Typography>
-          <TableContainer component={Paper}>
-            <Table size="small">
-              <TableHead>
-                <TableRow>
-                  <TableCell>Month</TableCell>
-                  <TableCell align="right">Airbnb Income</TableCell>
-                  <TableCell align="right">Airbnb Expenses</TableCell>
-                  <TableCell align="right">Long-Term Rent</TableCell>
-                  <TableCell align="right">Airbnb Advantage</TableCell>
-                </TableRow>
-              </TableHead>
-              <TableBody>
-                {airbnbPL.months.map((m) => (
-                  <TableRow key={m.month}>
-                    <TableCell>
-                      {new Date(m.month + '-01').toLocaleString('default', { month: 'long', year: 'numeric', timeZone: 'UTC' })}
-                    </TableCell>
-                    <TableCell align="right">${m.income.toLocaleString('en-CA', { minimumFractionDigits: 2 })}</TableCell>
-                    <TableCell align="right" sx={{ color: 'error.main' }}>
-                      ${m.expenses.toLocaleString('en-CA', { minimumFractionDigits: 2 })}
-                    </TableCell>
-                    <TableCell align="right">
-                      {m.longTermRent > 0 ? `$${m.longTermRent.toLocaleString('en-CA', { minimumFractionDigits: 2 })}` : '—'}
-                    </TableCell>
-                    <TableCell align="right" sx={{ color: m.advantage >= 0 ? 'success.main' : 'error.main', fontWeight: 600 }}>
-                      {m.advantage >= 0 ? '+' : '-'}${Math.abs(m.advantage).toLocaleString('en-CA', { minimumFractionDigits: 2 })}
+      {/* Airbnb vs Long-Term Rent Section — one table per room + combined */}
+      {airbnbPL && airbnbPL.months?.length > 0 && (() => {
+        const fmt = n => `$${n.toLocaleString('en-CA', { minimumFractionDigits: 2 })}`;
+        const signed = n => `${n >= 0 ? '+' : '-'}$${Math.abs(n).toLocaleString('en-CA', { minimumFractionDigits: 2 })}`;
+        const monthLabel = m => new Date(m + '-01').toLocaleString('default', { month: 'long', year: 'numeric', timeZone: 'UTC' });
+        return (
+          <Box sx={{ mt: 4 }}>
+            <Typography variant="h5" gutterBottom>
+              Airbnb vs Long-Term Rent
+            </Typography>
+
+            {airbnbPL.rooms.map((room) => {
+              const roomMonths = airbnbPL.months.filter(m => {
+                const r = m.rooms[room.tenantId];
+                return m.month >= room.startMonth || r.income > 0 || r.direct > 0 || r.commonShare > 0;
+              });
+              const rt = airbnbPL.totals.rooms[room.tenantId];
+              if (roomMonths.length === 0) return null;
+              return (
+                <Box key={room.tenantId} sx={{ mb: 3 }}>
+                  <Typography variant="h6" sx={{ mb: 0.5 }}>{room.name}</Typography>
+                  <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1 }}>
+                    Foregone long-term rent {fmt(room.rentAmount)}/mo from {monthLabel(room.startMonth)}
+                  </Typography>
+                  <TableContainer component={Paper}>
+                    <Table size="small">
+                      <TableHead>
+                        <TableRow>
+                          <TableCell>Month</TableCell>
+                          <TableCell align="right">Income</TableCell>
+                          <TableCell align="right">Direct Expenses</TableCell>
+                          <TableCell align="right">Common Share</TableCell>
+                          <TableCell align="right">Foregone Rent</TableCell>
+                          <TableCell align="right">Advantage</TableCell>
+                        </TableRow>
+                      </TableHead>
+                      <TableBody>
+                        {roomMonths.map((m) => {
+                          const r = m.rooms[room.tenantId];
+                          return (
+                            <TableRow key={m.month}>
+                              <TableCell>{monthLabel(m.month)}</TableCell>
+                              <TableCell align="right">{fmt(r.income)}</TableCell>
+                              <TableCell align="right" sx={{ color: 'error.main' }}>{fmt(r.direct)}</TableCell>
+                              <TableCell align="right" sx={{ color: 'error.main' }}>{r.commonShare > 0 ? fmt(r.commonShare) : '—'}</TableCell>
+                              <TableCell align="right">{r.foregoneRent > 0 ? fmt(r.foregoneRent) : '—'}</TableCell>
+                              <TableCell align="right" sx={{ color: r.advantage >= 0 ? 'success.main' : 'error.main', fontWeight: 600 }}>
+                                {signed(r.advantage)}
+                              </TableCell>
+                            </TableRow>
+                          );
+                        })}
+                        <TableRow sx={{ '& td': { fontWeight: 700, borderTop: 2, borderColor: 'divider' } }}>
+                          <TableCell>Total</TableCell>
+                          <TableCell align="right">{fmt(rt.income)}</TableCell>
+                          <TableCell align="right" sx={{ color: 'error.main' }}>{fmt(rt.direct)}</TableCell>
+                          <TableCell align="right" sx={{ color: 'error.main' }}>{rt.commonShare > 0 ? fmt(rt.commonShare) : '—'}</TableCell>
+                          <TableCell align="right">{fmt(rt.foregoneRent)}</TableCell>
+                          <TableCell align="right" sx={{ color: rt.advantage >= 0 ? 'success.main' : 'error.main' }}>
+                            {signed(rt.advantage)}
+                          </TableCell>
+                        </TableRow>
+                      </TableBody>
+                    </Table>
+                  </TableContainer>
+                </Box>
+              );
+            })}
+
+            <Typography variant="h6" sx={{ mb: 1 }}>Combined</Typography>
+            <TableContainer component={Paper}>
+              <Table size="small">
+                <TableHead>
+                  <TableRow>
+                    <TableCell>Month</TableCell>
+                    <TableCell align="right">Airbnb Income</TableCell>
+                    <TableCell align="right">Airbnb Expenses</TableCell>
+                    <TableCell align="right">Foregone Rent</TableCell>
+                    <TableCell align="right">Airbnb Advantage</TableCell>
+                  </TableRow>
+                </TableHead>
+                <TableBody>
+                  {airbnbPL.months.map((m) => (
+                    <TableRow key={m.month}>
+                      <TableCell>
+                        {monthLabel(m.month)}
+                        {m.unassigned > 0 && (
+                          <Chip label={`${fmt(m.unassigned)} unassigned`} size="small" color="warning" sx={{ ml: 1 }} />
+                        )}
+                      </TableCell>
+                      <TableCell align="right">{fmt(m.combined.income)}</TableCell>
+                      <TableCell align="right" sx={{ color: 'error.main' }}>{fmt(m.combined.expenses)}</TableCell>
+                      <TableCell align="right">{m.combined.foregoneRent > 0 ? fmt(m.combined.foregoneRent) : '—'}</TableCell>
+                      <TableCell align="right" sx={{ color: m.combined.advantage >= 0 ? 'success.main' : 'error.main', fontWeight: 600 }}>
+                        {signed(m.combined.advantage)}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                  <TableRow sx={{ '& td': { fontWeight: 700, borderTop: 2, borderColor: 'divider' } }}>
+                    <TableCell>Total</TableCell>
+                    <TableCell align="right">{fmt(airbnbPL.totals.combined.income)}</TableCell>
+                    <TableCell align="right" sx={{ color: 'error.main' }}>{fmt(airbnbPL.totals.combined.expenses)}</TableCell>
+                    <TableCell align="right">{fmt(airbnbPL.totals.combined.foregoneRent)}</TableCell>
+                    <TableCell align="right" sx={{ color: airbnbPL.totals.combined.advantage >= 0 ? 'success.main' : 'error.main' }}>
+                      {signed(airbnbPL.totals.combined.advantage)}
                     </TableCell>
                   </TableRow>
-                ))}
-                <TableRow sx={{ '& td': { fontWeight: 700, borderTop: 2, borderColor: 'divider' } }}>
-                  <TableCell>Total</TableCell>
-                  <TableCell align="right">${airbnbPL.totals.income.toLocaleString('en-CA', { minimumFractionDigits: 2 })}</TableCell>
-                  <TableCell align="right" sx={{ color: 'error.main' }}>
-                    ${airbnbPL.totals.expenses.toLocaleString('en-CA', { minimumFractionDigits: 2 })}
-                  </TableCell>
-                  <TableCell align="right">${airbnbPL.totals.longTermRent.toLocaleString('en-CA', { minimumFractionDigits: 2 })}</TableCell>
-                  <TableCell align="right" sx={{ color: airbnbPL.totals.advantage >= 0 ? 'success.main' : 'error.main' }}>
-                    {airbnbPL.totals.advantage >= 0 ? '+' : '-'}${Math.abs(airbnbPL.totals.advantage).toLocaleString('en-CA', { minimumFractionDigits: 2 })}
-                  </TableCell>
-                </TableRow>
-              </TableBody>
-            </Table>
-          </TableContainer>
-        </Box>
-      )}
+                </TableBody>
+              </Table>
+            </TableContainer>
+          </Box>
+        );
+      })()}
 
       {/* Monthly Profit/Loss Section */}
       <Box sx={{ mt: 4 }}>

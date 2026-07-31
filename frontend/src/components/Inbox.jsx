@@ -390,6 +390,21 @@ export default function Inbox() {
                       ))}
                     </Select>
                   </FormControl>
+                  {['Airbnb', 'Common Airbnb Expenses'].includes(editForm.category) && (
+                    <FormControl fullWidth>
+                      <InputLabel>Airbnb room</InputLabel>
+                      <Select
+                        value={editForm.tenantId || ''}
+                        label="Airbnb room"
+                        onChange={(e) => setEditForm({ ...editForm, tenantId: e.target.value })}
+                      >
+                        <MenuItem value="">— none —</MenuItem>
+                        {tenants.filter(t => /airbnb/i.test(t.name)).map(t => (
+                          <MenuItem key={t.id} value={t.id}>{t.name}</MenuItem>
+                        ))}
+                      </Select>
+                    </FormControl>
+                  )}
                   <TextField
                     label="Description"
                     value={editForm.description}

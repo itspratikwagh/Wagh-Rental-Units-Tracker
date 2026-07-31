@@ -69,6 +69,8 @@ async function approveTransaction(prisma, pending, overrides = {}, opts = {}) {
     const propertyId = overrides.propertyId || pending.propertyId;
     if (!propertyId) throw new Error('Property must be selected before approving an expense');
     resolvedPropertyId = propertyId;
+    // Airbnb-room attribution (Expense.tenantId) — optional
+    resolvedTenantId = overrides.tenantId || pending.tenantId || null;
 
     record = await prisma.expense.create({
       data: {
@@ -77,6 +79,7 @@ async function approveTransaction(prisma, pending, overrides = {}, opts = {}) {
         category: overrides.category || pending.category || 'Utility Bills',
         description: overrides.description || pending.description || 'Utility bill',
         propertyId,
+        tenantId: resolvedTenantId,
         updatedAt: new Date(),
       },
     });

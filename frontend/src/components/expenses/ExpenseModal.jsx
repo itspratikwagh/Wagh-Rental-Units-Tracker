@@ -15,6 +15,8 @@ import { EXPENSE_CATEGORIES } from '../../config';
  * Expense add/edit modal extracted from Expenses.jsx.
  * Receives all necessary state and handlers as props.
  */
+const AIRBNB_ROOM_CATEGORIES = ['Airbnb', 'Common Airbnb Expenses'];
+
 const ExpenseModal = ({
   open,
   onClose,
@@ -24,6 +26,7 @@ const ExpenseModal = ({
   newExpense,
   handleChange,
   properties,
+  airbnbTenants = [],
 }) => {
   return (
     <Dialog open={open} onClose={onClose}>
@@ -69,6 +72,25 @@ const ExpenseModal = ({
               </MenuItem>
             ))}
           </TextField>
+          {AIRBNB_ROOM_CATEGORIES.includes(newExpense.category) && airbnbTenants.length > 0 && (
+            <TextField
+              fullWidth
+              select
+              label="Airbnb room"
+              name="tenantId"
+              value={newExpense.tenantId || ''}
+              onChange={handleChange}
+              margin="normal"
+              helperText="Which room this expense belongs to (leave blank for common/unassigned)"
+            >
+              <MenuItem value="">— none —</MenuItem>
+              {airbnbTenants.map((t) => (
+                <MenuItem key={t.id} value={t.id}>
+                  {t.name}
+                </MenuItem>
+              ))}
+            </TextField>
+          )}
           <TextField
             fullWidth
             label="Description"

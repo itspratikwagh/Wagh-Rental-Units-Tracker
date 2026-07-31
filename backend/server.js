@@ -660,8 +660,8 @@ app.get('/api/expenses', async (req, res) => {
 // Create a new expense
 app.post('/api/expenses', async (req, res) => {
   try {
-    const { amount, date, category, description, propertyId } = req.body;
-    
+    const { amount, date, category, description, propertyId, tenantId } = req.body;
+
     if (!amount || !date || !category || !description || !propertyId) {
       return res.status(400).json({ error: 'Missing required fields' });
     }
@@ -673,6 +673,7 @@ app.post('/api/expenses', async (req, res) => {
         category,
         description,
         propertyId,
+        tenantId: tenantId || null, // optional Airbnb-room attribution
         updatedAt: new Date()
       },
     });
@@ -722,6 +723,9 @@ app.put('/api/expenses/:id', async (req, res) => {
         date: new Date(req.body.date),
         category: req.body.category,
         description: req.body.description,
+        // only touch tenantId when the caller sends the field — recurring/chat
+        // update paths that omit it must not null out room attribution
+        tenantId: req.body.tenantId !== undefined ? (req.body.tenantId || null) : undefined,
       },
     });
     res.json(expense);
@@ -992,61 +996,117 @@ app.get('/api/dashboard/investment-stats', async (req, res) => {
 
 // --- Airbnb vs Long-Term Rent API ---
 
+// Per-room P&L. Rooms = pseudo-tenants named "Airbnb *"; each room's foregone
+// long-term rent comes from its rentAmount, and its start month from leaseStart.
+// Direct expenses attribute by Expense.tenantId; "Common Airbnb Expenses" are
+// split equally across the rooms active that month.
 app.get('/api/dashboard/airbnb-pl', async (req, res) => {
   try {
-    const AIRBNB_TENANT_NAME = 'Airbnb';
-    const LONG_TERM_RENT = 1125;
-    const AIRBNB_START_MONTH = '2026-04'; // opportunity cost starts here
+    const COMMON_CATEGORY = 'Common Airbnb Expenses';
+    const round2 = x => Math.round(x * 100) / 100;
+    const monthKey = d => `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`;
 
-    const airbnbTenant = await prisma.tenant.findFirst({
-      where: { name: AIRBNB_TENANT_NAME, deletedAt: null },
+    const roomTenants = await prisma.tenant.findMany({
+      where: { name: { contains: 'airbnb', mode: 'insensitive' }, deletedAt: null },
+      orderBy: { name: 'asc' },
     });
-
-    if (!airbnbTenant) {
-      return res.json({ months: [], totals: {} });
+    if (roomTenants.length === 0) {
+      return res.json({ rooms: [], months: [], totals: {} });
     }
+
+    const rooms = roomTenants.map(t => ({
+      tenantId: t.id,
+      name: t.name,
+      rentAmount: t.rentAmount,
+      startMonth: monthKey(t.leaseStart),
+    }));
+    const roomIds = rooms.map(r => r.tenantId);
 
     const [payments, expenses] = await Promise.all([
       prisma.payment.findMany({
-        where: { tenantId: airbnbTenant.id, deletedAt: null },
+        where: { tenantId: { in: roomIds }, deletedAt: null },
         orderBy: { date: 'asc' },
       }),
       prisma.expense.findMany({
-        where: { category: 'Airbnb', deletedAt: null },
+        where: { category: { in: ['Airbnb', COMMON_CATEGORY] }, deletedAt: null },
         orderBy: { date: 'asc' },
       }),
     ]);
 
-    const monthlyData = {};
+    // monthly[key] = { income: {tenantId: n}, direct: {tenantId: n}, common: n, unassigned: n }
+    const monthly = {};
+    const bucket = key => (monthly[key] ??= { income: {}, direct: {}, common: 0, unassigned: 0 });
 
     for (const p of payments) {
-      const key = `${p.date.getUTCFullYear()}-${String(p.date.getUTCMonth() + 1).padStart(2, '0')}`;
-      if (!monthlyData[key]) monthlyData[key] = { income: 0, expenses: 0 };
-      monthlyData[key].income += p.amount;
+      const b = bucket(monthKey(p.date));
+      b.income[p.tenantId] = (b.income[p.tenantId] || 0) + p.amount;
     }
-
     for (const e of expenses) {
-      const key = `${e.date.getUTCFullYear()}-${String(e.date.getUTCMonth() + 1).padStart(2, '0')}`;
-      if (!monthlyData[key]) monthlyData[key] = { income: 0, expenses: 0 };
-      monthlyData[key].expenses += e.amount;
+      const b = bucket(monthKey(e.date));
+      if (e.category === COMMON_CATEGORY) {
+        b.common += e.amount;
+      } else if (e.tenantId && roomIds.includes(e.tenantId)) {
+        b.direct[e.tenantId] = (b.direct[e.tenantId] || 0) + e.amount;
+      } else {
+        b.unassigned += e.amount; // Airbnb expense with no room — combined-only, flagged in UI
+      }
     }
 
-    const months = Object.keys(monthlyData).sort().map(key => {
-      const rent = key >= AIRBNB_START_MONTH ? LONG_TERM_RENT : 0;
-      const income = Math.round(monthlyData[key].income * 100) / 100;
-      const exp = Math.round(monthlyData[key].expenses * 100) / 100;
-      const advantage = Math.round((income - exp - rent) * 100) / 100;
-      return { month: key, income, expenses: exp, longTermRent: rent, advantage };
+    const months = Object.keys(monthly).sort().map(key => {
+      const b = monthly[key];
+      const activeRooms = rooms.filter(r => key >= r.startMonth);
+      const perRoom = {};
+      let cIncome = 0, cExpenses = round2(b.common + b.unassigned), cRent = 0, cAdvantage = 0;
+
+      for (const room of rooms) {
+        const income = round2(b.income[room.tenantId] || 0);
+        const direct = round2(b.direct[room.tenantId] || 0);
+        const isActive = key >= room.startMonth;
+        const commonShare = isActive && activeRooms.length > 0 ? round2(b.common / activeRooms.length) : 0;
+        const foregoneRent = isActive ? room.rentAmount : 0;
+        const advantage = round2(income - direct - commonShare - foregoneRent);
+        perRoom[room.tenantId] = { income, direct, commonShare, foregoneRent, advantage };
+        cIncome = round2(cIncome + income);
+        cExpenses = round2(cExpenses + direct);
+        cRent += foregoneRent;
+        cAdvantage = round2(cAdvantage + advantage);
+      }
+      // unassigned reduces the combined advantage (it's real Airbnb money spent)
+      cAdvantage = round2(cAdvantage - b.unassigned);
+
+      return {
+        month: key,
+        rooms: perRoom,
+        unassigned: round2(b.unassigned),
+        combined: { income: cIncome, expenses: cExpenses, foregoneRent: cRent, advantage: cAdvantage },
+      };
     });
 
-    const totals = months.reduce((acc, m) => ({
-      income: Math.round((acc.income + m.income) * 100) / 100,
-      expenses: Math.round((acc.expenses + m.expenses) * 100) / 100,
-      longTermRent: acc.longTermRent + m.longTermRent,
-      advantage: Math.round((acc.advantage + m.advantage) * 100) / 100,
-    }), { income: 0, expenses: 0, longTermRent: 0, advantage: 0 });
+    const totals = {
+      rooms: {},
+      unassigned: round2(months.reduce((s, m) => s + m.unassigned, 0)),
+      combined: { income: 0, expenses: 0, foregoneRent: 0, advantage: 0 },
+    };
+    for (const room of rooms) {
+      totals.rooms[room.tenantId] = months.reduce((acc, m) => {
+        const r = m.rooms[room.tenantId];
+        return {
+          income: round2(acc.income + r.income),
+          direct: round2(acc.direct + r.direct),
+          commonShare: round2(acc.commonShare + r.commonShare),
+          foregoneRent: round2(acc.foregoneRent + r.foregoneRent),
+          advantage: round2(acc.advantage + r.advantage),
+        };
+      }, { income: 0, direct: 0, commonShare: 0, foregoneRent: 0, advantage: 0 });
+    }
+    totals.combined = months.reduce((acc, m) => ({
+      income: round2(acc.income + m.combined.income),
+      expenses: round2(acc.expenses + m.combined.expenses),
+      foregoneRent: round2(acc.foregoneRent + m.combined.foregoneRent),
+      advantage: round2(acc.advantage + m.combined.advantage),
+    }), { income: 0, expenses: 0, foregoneRent: 0, advantage: 0 });
 
-    res.json({ months, totals, config: { longTermRent: LONG_TERM_RENT, startMonth: AIRBNB_START_MONTH } });
+    res.json({ rooms, months, totals });
   } catch (error) {
     console.error('Error computing Airbnb P&L:', error);
     res.status(500).json({ error: error.message });

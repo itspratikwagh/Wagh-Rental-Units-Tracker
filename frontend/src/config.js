@@ -1,5 +1,6 @@
 export const EXPENSE_CATEGORIES = [
   'Airbnb',
+  'Common Airbnb Expenses',
   'Home Improvement',
   'Insurance',
   'Internet Bills',
