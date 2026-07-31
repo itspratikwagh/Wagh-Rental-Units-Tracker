@@ -227,12 +227,19 @@ const Expenses = () => {
       );
     }
 
-    // Filter by date range
+    // Filter by date range — compare CALENDAR DATES, not timestamps.
+    // Expense dates are stored/displayed as UTC dates; comparing raw Date
+    // objects both shifted midnight-UTC dates into the previous local day and
+    // dropped last-day expenses with intraday timestamps (e.g. Jul 31 9:33am
+    // failed `<= Jul 31 00:00`).
     const { startDate, endDate } = getDateRangeValues();
     if (startDate && endDate) {
+      const localYMD = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+      const startKey = localYMD(startDate);
+      const endKey = localYMD(endDate);
       filtered = filtered.filter(expense => {
-        const expenseDate = new Date(expense.date);
-        return expenseDate >= startDate && expenseDate <= endDate;
+        const key = new Date(expense.date).toISOString().slice(0, 10);
+        return key >= startKey && key <= endKey;
       });
     }
 
@@ -242,17 +249,30 @@ const Expenses = () => {
 
   const getExpenseStatistics = () => {
     const filteredExpenses = getFilteredExpenses();
-    const allExpenses = [...expenses];
 
-    const now = new Date();
-    const thisMonth = allExpenses.filter(expense => {
-      const expenseDate = new Date(expense.date);
-      return expenseDate.getMonth() === now.getMonth() && expenseDate.getFullYear() === now.getFullYear();
+    // This Month / This Year respect the property, category, and search
+    // filters (but not the date-range dropdown — they have their own window),
+    // so selecting "Airbnb" makes the boxes show Airbnb-only totals.
+    const scopedExpenses = expenses.filter(expense => {
+      if (propertyFilter !== 'all' && expense.propertyId !== propertyFilter) return false;
+      if (categoryFilter !== 'all' && expense.category !== categoryFilter) return false;
+      if (searchTerm.trim() !== '' &&
+        !(expense.description?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+          expense.category.toLowerCase().includes(searchTerm.toLowerCase()))) return false;
+      return true;
     });
 
-    const thisYear = allExpenses.filter(expense => {
+    // Dates are stored (and displayed) as UTC calendar dates — compare in UTC,
+    // or midnight-UTC dates like "Jul 1" get counted into the previous month.
+    const now = new Date();
+    const thisMonth = scopedExpenses.filter(expense => {
       const expenseDate = new Date(expense.date);
-      return expenseDate.getFullYear() === now.getFullYear();
+      return expenseDate.getUTCMonth() === now.getMonth() && expenseDate.getUTCFullYear() === now.getFullYear();
+    });
+
+    const thisYear = scopedExpenses.filter(expense => {
+      const expenseDate = new Date(expense.date);
+      return expenseDate.getUTCFullYear() === now.getFullYear();
     });
 
     const totalAmount = filteredExpenses.reduce((sum, expense) => sum + parseFloat(expense.amount), 0);
