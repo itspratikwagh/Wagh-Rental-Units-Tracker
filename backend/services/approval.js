@@ -211,6 +211,13 @@ async function hasExistingRecord(prisma, pending) {
 // Requirements: high confidence, positive amount, tenant/property resolved, and
 // no matching record already in the books (those stay pending for review).
 async function autoApproveHighConfidence(prisma, since) {
+  // Kill switch: set AUTO_APPROVE=off in the environment and every scanned
+  // transaction waits in the inbox for manual review ("Approve All High
+  // Confidence" still offers one-click bulk approval there).
+  if (process.env.AUTO_APPROVE === 'off') {
+    return { approved: [], errors: [], skippedAsPossibleDuplicate: 0, skippedArchivedTenant: 0, disabled: true };
+  }
+
   const candidates = await prisma.pendingTransaction.findMany({
     where: {
       status: 'pending',
