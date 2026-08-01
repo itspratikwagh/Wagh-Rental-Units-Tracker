@@ -451,6 +451,11 @@ async function scanGmail(prisma, options = {}) {
   const gmail = await getGmailClient(syncState.refreshToken);
   const results = { interac: 0, outgoing_interac: 0, utility: 0, amazon: 0, errors: [] };
 
+  // Skip rules apply in BOTH directions: outgoing transfers TO these people
+  // (personal payments) and incoming transfers FROM them (loan repayments
+  // etc.) are not rental activity.
+  const { skips: skipRules } = await getSenderRules(prisma);
+
   // Self-healing window: scan back at least LOOKBACK_DAYS, more if lastSyncAt is older.
   // Dedup against existing pendingTransactions makes re-scanning safe.
   let afterClause = buildAfterClause(syncState.lastSyncAt, options.afterDate);
@@ -506,6 +511,9 @@ async function scanGmail(prisma, options = {}) {
 
         if (!parsed.amount) continue;
 
+        // Incoming transfer from a skip-listed sender (e.g. personal loan repayment)
+        if (isSkippedRecipient(skipRules, parsed.senderName)) continue;
+
         const { tenantId, confidence } = await matchTenant(prisma, parsed.senderName);
 
         const rentMonth = getRentMonth(parsed.date);
@@ -537,7 +545,6 @@ async function scanGmail(prisma, options = {}) {
 
   // Scan for outgoing Interac e-Transfers (expenses paid via e-Transfer)
   try {
-    const { skips: skipRules } = await getSenderRules(prisma);
     const outgoingQuery = `from:payments.interac.ca (subject:"transfer to" OR subject:"sent" subject:"money") ${afterClause} in:anywhere`;
     let allOutgoingMessages = [];
     let outgoingPageToken = null;

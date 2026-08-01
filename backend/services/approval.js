@@ -223,11 +223,23 @@ async function autoApproveHighConfidence(prisma, since) {
   const approved = [];
   const errors = [];
   let skippedAsPossibleDuplicate = 0;
+  let skippedArchivedTenant = 0;
 
   for (const pending of candidates) {
     if (pending.type === 'payment' && !pending.tenantId) continue;
     if (pending.type === 'expense' && !pending.propertyId) continue;
     try {
+      // Never auto-record a payment matched to an ARCHIVED tenant — their
+      // lease is over, so incoming money from them is more likely a loan
+      // repayment, deposit-related, or personal. Hold it for review.
+      // (Airbnb pseudo-tenants are never archived, so payouts are unaffected.)
+      if (pending.type === 'payment') {
+        const tenant = await prisma.tenant.findUnique({ where: { id: pending.tenantId } });
+        if (!tenant || tenant.isArchived) {
+          skippedArchivedTenant++;
+          continue; // stays pending
+        }
+      }
       if (await hasExistingRecord(prisma, pending)) {
         skippedAsPossibleDuplicate++;
         continue; // stays pending — user decides if it's a duplicate or a second payment
@@ -239,7 +251,7 @@ async function autoApproveHighConfidence(prisma, since) {
     }
   }
 
-  return { approved, errors, skippedAsPossibleDuplicate };
+  return { approved, errors, skippedAsPossibleDuplicate, skippedArchivedTenant };
 }
 
 module.exports = { approveTransaction, undoApproval, autoApproveHighConfidence };
