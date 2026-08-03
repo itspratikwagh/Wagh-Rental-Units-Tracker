@@ -150,6 +150,17 @@ async function buildDataContext(prisma) {
     }),
   ]);
 
+  // Deposits are trust money tracked separately from rent — surface them so
+  // questions about balances owed don't confuse deposit with rent.
+  const depositSummary = tenants
+    .filter(t => (t.depositRequired || 0) > 0 || (t.depositPaid || 0) > 0)
+    .map(t => ({
+      tenant: t.name,
+      depositRequired: t.depositRequired || 0,
+      depositPaid: t.depositPaid || 0,
+      depositOutstanding: Math.max(0, (t.depositRequired || 0) - (t.depositPaid || 0)),
+    }));
+
   const tenantSummary = tenants.map(t => ({
     id: t.id,
     name: t.name,
@@ -168,6 +179,7 @@ async function buildDataContext(prisma) {
     amount: p.amount,
     status: p.status,
     method: p.paymentMethod,
+    notes: p.notes || undefined, // notes carry context like waived rent — needed for arrears answers
   }));
 
   const propertyMap = {};
@@ -190,6 +202,9 @@ ${JSON.stringify(properties.map(p => ({ id: p.id, name: p.name, address: p.addre
 TENANTS:
 ${JSON.stringify(tenantSummary, null, 2)}
 
+SECURITY DEPOSITS (money held in trust — NOT rent income, tracked separately from payments):
+${JSON.stringify(depositSummary, null, 2)}
+
 ALL PAYMENTS (newest first):
 ${JSON.stringify(paymentSummary, null, 2)}
 
@@ -203,6 +218,8 @@ Rules:
 - Format currency as CAD (e.g., $1,500.00).
 - If calculating totals or comparisons, show your reasoning.
 - If the data doesn't contain enough information to answer, say so.
+- ALWAYS read a payment's "notes" before judging arrears. A $0 payment with a note saying rent was waived means that month is settled — do NOT report the tenant as behind for it.
+- Security deposits are separate from rent: never count deposit money as rent income, and never report a deposit balance as overdue rent.
 - Keep responses concise and practical.
 - When the user asks to create, add, update, or delete data, use the appropriate tool.
 - For property names, match them to existing property names in the data above.
