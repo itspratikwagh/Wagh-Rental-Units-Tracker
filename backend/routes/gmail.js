@@ -120,8 +120,8 @@ module.exports = function (prisma) {
       if (results.payments) parts.push(`${results.payments} payment(s)`);
       if (results.expenses) parts.push(`${results.expenses} expense(s)`);
       const summary = parts.length > 0 ? parts.join(', ') : 'no new items';
-      let autoRej = results.autoApproved ? ` ${results.autoApproved} auto-approved and recorded.` : '';
-      if (results.autoRejected) autoRej += ` (${results.autoRejected} auto-rejected as duplicates)`;
+      // Nothing is ever auto-approved — everything waits in the Inbox for review.
+      const autoRej = results.autoRejected ? ` (${results.autoRejected} auto-rejected as duplicates)` : '';
 
       const log = results.scanLog || {};
       res.json({

@@ -1,7 +1,6 @@
 const Anthropic = require('@anthropic-ai/sdk');
-const { getGmailClient, decodeBody, getHtmlBody, scanGmail, buildAfterClause, stripHtmlToText } = require('./gmail');
+const { getGmailClient, decodeBody, getHtmlBody, buildAfterClause, stripHtmlToText } = require('./gmail');
 const { sendPush } = require('./notify');
-const { autoApproveHighConfidence } = require('./approval');
 
 let anthropicClient = null;
 
@@ -84,8 +83,11 @@ ${JSON.stringify(tenantList, null, 2)}
 KNOWN SENDER ALIASES (sender name -> tenant name):
 ${aliasText}
 
+You are the ONLY classifier — no other code parses these emails. Every transaction you return goes to a human review queue; NOTHING is recorded without the owner's explicit approval. So err on the side of surfacing borderline items, and use matchConfidence to tell the reviewer how sure you are.
+
 CLASSIFICATION RULES:
-- Interac e-Transfer RECEIVED (incoming money, "You've received", from notify@payments.interac.ca) = PAYMENT (rent from tenant). Match sender to a tenant using name, email, or aliases above. EXCEPTION: the skip list below applies to INCOMING transfers too — money received FROM a skip-listed person (e.g. a personal loan repayment) is NOT rental income; ignore those emails entirely.
+- Interac e-Transfer RECEIVED (incoming money, "You've received", from notify@payments.interac.ca) = PAYMENT (rent from tenant). Match sender to a tenant using name, email, or aliases above. For tenant rent payments, put the rent month in the description, e.g. "Interac e-Transfer from JANE DOE (September 2026 rent)" (see RENT MONTH RULE). EXCEPTION: the skip list below applies to INCOMING transfers too — money received FROM a skip-listed person (e.g. a personal loan repayment) is NOT rental income; ignore those emails entirely.
+- Interac LIFECYCLE NOISE: only COMPLETED transfers count ("You've received...", "...has been successfully deposited"). IGNORE money requests, transfer reminders, expiry warnings, declines, cancellations, and "transfer returned/cancelled" notices — none of them move money.
 - Interac e-Transfer SENT (outgoing money, "Your transfer to" or "You've sent X money", from payments.interac.ca) = EXPENSE. Skip these known personal recipients (NOT property expenses): ${skipText}. Outgoing transfers to Airbnb guests (refunds, partial refunds for early checkout) are legitimate property expenses — categorize as "Airbnb".
 - DEPOSIT RETURNS: an outgoing e-Transfer to a CURRENT OR FORMER TENANT (match the recipient against the tenant list, including archived tenants) is most likely a security-deposit return, not an expense. Include it with category "Deposit Return", describe it as "Possible deposit return to <name>", and set matchConfidence "none" so it is held for human review instead of being recorded automatically.
 - AIRBNB PAYOUTS AND ROOMS: there are multiple Airbnb rooms, each a separate tenant (e.g. "Airbnb 01", "Airbnb 02"). Payout emails contain a Details section with the LISTING NAME, e.g. "Home • {dates} {listing name} ({listing id}". Match the listing name against the KNOWN SENDER ALIASES list to pick the room tenant and set its tenantId with matchConfidence "high". If a listing name is present but matches no alias, use matchConfidence "medium".
@@ -96,8 +98,8 @@ CLASSIFICATION RULES:
 - Insurance bills, mortgage statements, property tax notices = EXPENSE.
 - IGNORE only clear noise: newsletters, social media notifications, job-related emails, marketing/promotions without an actual purchase, crypto exchanges, spam, login/security alerts.
 - IGNORE shipping/delivery/tracking notifications ("Shipped:", "Delivered:", "Arriving today", "Out for delivery") — the ORDER CONFIRMATION email is the record of a purchase; a shipping notice for the same order is a duplicate, not a new expense.
-- ORDER TOTALS: for a multi-item order ("...and N more items"), the amount MUST be the full order total, never a single item's price. Amazon order emails show one "Total" PER SHIPMENT with no grand total — sum all shipment totals. Check the [AMOUNTS FROM LATER IN THIS EMAIL] section for totals beyond the preview.
-- WHEN IN DOUBT, INCLUDE: any other email showing an actual dollar amount paid or received (bills, receipts, invoices, bank or e-Transfer notices, insurance, taxes, paid contractor work, service charges) should be returned as a transaction even if you are not sure it relates to the rental properties — use matchConfidence "medium" or "none" to flag uncertainty. It is better to surface a borderline item for human review than to silently drop it. Only high-confidence items are recorded automatically; everything else goes to a review queue.
+- ORDER TOTALS: for a multi-item order ("...and N more items"), the amount MUST be the full order total, never a single item's price. Amazon order emails show one "Total" PER SHIPMENT with no grand total — sum all shipment totals ("Subtotal" lines are NOT totals). Beware of USD: if any total is billed in US dollars ("Total US$39.22"), report the USD figure but say "billed in USD — verify CAD charge" in the description and set matchConfidence "none" (the actual card charge in CAD differs).
+- WHEN IN DOUBT, INCLUDE: any other email showing an actual dollar amount paid or received (bills, receipts, invoices, bank or e-Transfer notices, insurance, taxes, paid contractor work, service charges) should be returned as a transaction even if you are not sure it relates to the rental properties — use matchConfidence "medium" or "none" to flag uncertainty. It is better to surface a borderline item for human review than to silently drop it.
 
 RENT MONTH RULE: If payment date is after the 15th, it counts toward NEXT month's rent. Otherwise it's current month's rent.
 
@@ -168,28 +170,46 @@ const TRANSACTIONS_SCHEMA = {
 // confirmation email is the record of the expense; "Shipped:"/"Delivered:"
 // emails repeat the same purchase and were double-recording Amazon orders.
 async function fetchRecentEmails(gmail, prisma, afterClause, maxResults) {
-  const query = `${afterClause} -category:promotions -category:social -category:forums -from:shipment-tracking@amazon.ca -from:order-update@amazon.ca`;
+  // Two queries, unioned:
+  // 1. Broad sweep — everything except bulk categories and Amazon shipping notices.
+  // 2. Critical financial senders searched EVERYWHERE (`in:anywhere` includes
+  //    spam; no category filters). The retired keyword matchers guaranteed these
+  //    senders were found even when Gmail miscategorized them — this query
+  //    inherits that guarantee so an Interac notice landing in spam or an order
+  //    email sorted into Promotions can never be silently skipped.
+  const queries = [
+    `${afterClause} -category:promotions -category:social -category:forums -from:shipment-tracking@amazon.ca -from:order-update@amazon.ca`,
+    `${afterClause} in:anywhere {from:payments.interac.ca from:auto-confirm@amazon.ca from:easymax@enmax.com from:no-reply@epcor.com subject:"shaw bill is ready"}`,
+  ];
 
+  const seenIds = new Set();
   const allMessageIds = [];
-  let pageToken = null;
 
-  do {
-    const res = await gmail.users.messages.list({
-      userId: 'me',
-      q: query,
-      maxResults: Math.min(maxResults, 100),
-      pageToken,
-    });
+  for (const query of queries) {
+    let pageToken = null;
+    do {
+      const res = await gmail.users.messages.list({
+        userId: 'me',
+        q: query,
+        maxResults: Math.min(maxResults, 100),
+        pageToken,
+      });
 
-    const messages = res.data.messages || [];
-    allMessageIds.push(...messages.map(m => m.id));
-    pageToken = res.data.nextPageToken;
+      for (const m of res.data.messages || []) {
+        if (!seenIds.has(m.id)) {
+          seenIds.add(m.id);
+          allMessageIds.push(m.id);
+        }
+      }
+      pageToken = res.data.nextPageToken;
 
-    if (allMessageIds.length >= MAX_EMAILS) {
-      console.warn(`[Gmail] Hit MAX_EMAILS cap (${MAX_EMAILS}) — some emails may have been skipped. Consider running a rescan with an earlier afterDate.`);
-      break;
-    }
-  } while (pageToken);
+      if (allMessageIds.length >= MAX_EMAILS) {
+        console.warn(`[Gmail] Hit MAX_EMAILS cap (${MAX_EMAILS}) — some emails may have been skipped. Consider running a rescan with an earlier afterDate.`);
+        pageToken = null;
+        break;
+      }
+    } while (pageToken);
+  }
 
   // Deduplicate against already-processed emails (pending transactions + scanned emails)
   const [existingPending, existingScanned] = await Promise.all([
@@ -471,10 +491,9 @@ async function getVerifiedGmailClient(prisma, syncState) {
   }
 }
 
-// Main hybrid scan function:
-// 1. Run keyword matchers FIRST for known email types (Interac, utilities, Amazon)
-//    — these are 100% reliable and never miss
-// 2. Then run AI scanner for everything else (catches new/unknown email types)
+// Main scan function. The AI is the sole classifier — the old keyword/regex
+// matchers are retired. Their targeted Gmail queries live on inside
+// fetchRecentEmails so coverage of critical senders is unchanged.
 async function runScan(prisma, options = {}) {
   const syncState = await prisma.gmailSyncState.findFirst();
   if (!syncState?.refreshToken) {
@@ -482,29 +501,6 @@ async function runScan(prisma, options = {}) {
   }
 
   const gmail = await getVerifiedGmailClient(prisma, syncState);
-
-  // ============================================================
-  // PHASE 1: Keyword matchers for known email types
-  // ============================================================
-  console.log('Phase 1: Running keyword matchers...');
-  let keywordResults;
-  try {
-    // scanGmail uses its own afterClause logic internally but does NOT update lastSyncAt
-    // We temporarily prevent it from updating lastSyncAt by passing options
-    keywordResults = await scanGmail(prisma, {
-      ...options,
-      skipSyncUpdate: true, // we'll update lastSyncAt at the end
-    });
-    console.log(`Keyword matchers found: ${keywordResults.interac} Interac, ${keywordResults.outgoing_interac || 0} outgoing, ${keywordResults.utility} utility, ${keywordResults.amazon} Amazon`);
-  } catch (err) {
-    console.error('Keyword matcher phase failed:', err.message);
-    keywordResults = { interac: 0, outgoing_interac: 0, utility: 0, amazon: 0, errors: [err.message] };
-  }
-
-  // ============================================================
-  // PHASE 2: AI scanner for remaining emails
-  // ============================================================
-  console.log('Phase 2: Running AI scanner for remaining emails...');
 
   // Self-healing date filter — never looks back less than LOOKBACK_DAYS even if
   // lastSyncAt has advanced past unprocessed emails. Dedup prevents reprocessing.
@@ -518,8 +514,8 @@ async function runScan(prisma, options = {}) {
     console.log(`Rescan mode: cleared ${deleted.count} scanned-email records`);
   }
 
-  // Fetch all new email IDs (keyword matchers already created pendingTransactions,
-  // so those gmailMessageIds will be filtered out as duplicates here)
+  // Fetch all new email IDs (anything already in pendingTransaction or
+  // scannedEmail is filtered out as a duplicate)
   const { newIds: newMessageIds, skippedIds, totalFetched } = await fetchRecentEmails(gmail, prisma, afterClause, maxResults);
 
   // Fetch subjects of skipped emails for the scan log (last 10)
@@ -594,48 +590,33 @@ async function runScan(prisma, options = {}) {
     }
   }
 
-  // Combine results
-  const totalPayments = (keywordResults.interac || 0) + aiResults.payments;
-  const totalExpenses = (keywordResults.outgoing_interac || 0) + (keywordResults.utility || 0) + (keywordResults.amazon || 0) + aiResults.expenses;
-  const allErrors = [...(keywordResults.errors || []), ...aiResults.errors];
-
   // ============================================================
   // Update sync state — ONLY if the scan completed without errors.
   // Advancing lastSyncAt after a partial/failed scan would skip the
   // unprocessed emails permanently. The self-healing LOOKBACK window
   // is the second line of defense if this ever advances too far.
   // ============================================================
-  if (allErrors.length === 0) {
+  if (aiResults.errors.length === 0) {
     await prisma.gmailSyncState.update({
       where: { id: syncState.id },
       data: { lastSyncAt: new Date() },
     });
   } else {
-    console.error(`Scan completed with ${allErrors.length} error(s) — NOT advancing lastSyncAt so missed emails get retried.`);
-    console.error('Scan errors:', allErrors);
+    console.error(`Scan completed with ${aiResults.errors.length} error(s) — NOT advancing lastSyncAt so missed emails get retried.`);
+    console.error('Scan errors:', aiResults.errors);
   }
 
   return {
-    payments: totalPayments,
-    expenses: totalExpenses,
-    total: totalPayments + totalExpenses,
+    payments: aiResults.payments,
+    expenses: aiResults.expenses,
+    total: aiResults.payments + aiResults.expenses,
     autoRejected: aiResults.autoRejected,
-    errors: allErrors,
+    errors: aiResults.errors,
     scanLog: {
       totalFetched,
       newEmails: newMessageIds.length,
       skippedDuplicates: skippedIds.length,
       skippedSamples: skippedSummary,
-      keywordResults: {
-        interac: keywordResults.interac || 0,
-        outgoing_interac: keywordResults.outgoing_interac || 0,
-        utility: keywordResults.utility || 0,
-        amazon: keywordResults.amazon || 0,
-      },
-      aiResults: {
-        payments: aiResults.payments,
-        expenses: aiResults.expenses,
-      },
     },
   };
 }
@@ -673,19 +654,10 @@ async function scanGmailWithAI(prisma, options = {}) {
     throw err;
   }
 
-  // Auto-approve high-confidence transactions found by THIS scan.
-  // Anything ambiguous stays in the inbox for manual review.
-  let autoApproved = [];
-  try {
-    const autoResult = await autoApproveHighConfidence(prisma, run.startedAt);
-    autoApproved = autoResult.approved;
-    results.errors.push(...autoResult.errors);
-    results.autoApproved = autoApproved.length;
-  } catch (err) {
-    results.errors.push(`Auto-approve: ${err.message}`);
-    results.autoApproved = 0;
-  }
-
+  // NOTHING is auto-approved — every scanned transaction waits in the Inbox
+  // for the owner's explicit approval. (Auto-approve was removed entirely at
+  // the owner's request; the "Approve All High Confidence" button in the
+  // Inbox remains for one-click MANUAL bulk approval.)
   const status = results.errors.length > 0 ? 'partial' : 'success';
   await prisma.scanRun.update({
     where: { id: run.id },
@@ -697,26 +669,21 @@ async function scanGmailWithAI(prisma, options = {}) {
       payments: results.payments || 0,
       expenses: results.expenses || 0,
       autoRejected: results.autoRejected || 0,
-      autoApproved: autoApproved.length,
       errors: results.errors.length > 0 ? results.errors.join('\n').slice(0, 4000) : null,
     },
   }).catch(e => console.error('Failed to record scan run:', e.message));
 
-  // Notify only when something happened: records were auto-approved or items need review
-  const needsReview = (results.total || 0) - autoApproved.length;
-  if (autoApproved.length > 0 || needsReview > 0) {
-    const lines = autoApproved.map(({ pending }) =>
-      pending.type === 'payment'
-        ? `✓ $${pending.amount.toFixed(2)} rent from ${pending.senderName || 'Unknown'}`
-        : `✓ $${pending.amount.toFixed(2)} — ${pending.description || pending.senderName || 'expense'}`
-    );
-    if (needsReview > 0) lines.push(`${needsReview} item(s) need review in the Inbox`);
+  // Notify only when the scan surfaced something to review
+  const needsReview = results.total || 0;
+  if (needsReview > 0) {
+    const lines = [
+      `${results.payments} payment(s), ${results.expenses} expense(s) waiting in the Inbox.`,
+    ];
+    if (results.autoRejected) lines.push(`${results.autoRejected} duplicate(s) auto-rejected.`);
     await sendPush(
-      autoApproved.length > 0
-        ? `Rental Tracker: ${autoApproved.length} transaction(s) recorded automatically`
-        : 'Rental Tracker: new items need review',
+      `Rental Tracker: ${needsReview} new item(s) need review`,
       lines.join('\n').slice(0, 800),
-      { priority: 'default', tags: 'moneybag' }
+      { priority: 'default', tags: 'incoming_envelope' }
     );
   }
 
