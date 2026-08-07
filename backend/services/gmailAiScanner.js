@@ -14,6 +14,24 @@ function getClient() {
 
 const BATCH_SIZE = 20;
 const MAX_EMAILS = 2000;
+// Upper bound on the email text handed to Claude. Routine scans see ~4 new
+// emails, so this is a safety valve, not a cost control.
+const MAX_BODY_CHARS = 6000;
+
+// Remove the noise that crowds out real content: tracking URLs, image/CID
+// junk, unsubscribe boilerplate, and whitespace padding. Keeps the words a
+// human would read — amounts, names, listing titles, order numbers.
+function cleanEmailBody(text) {
+  if (!text) return '';
+  return text
+    .replace(/https?:\/\/\S+/g, ' ')          // tracking + deep links
+    .replace(/\[cid:[^\]]*\]/gi, ' ')
+    .replace(/%[A-Za-z0-9_]+%/g, ' ')          // %opentrack% style markers
+    .replace(/[​-‍﻿­͏]/g, '') // zero-width padding
+    .replace(/(?:^|\s)(?:unsubscribe|view (?:in browser|online)|privacy policy|terms of service)[^.\n]{0,60}/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
 
 // Build context about tenants, properties, and sender rules for Claude
 async function buildScanContext(prisma) {
@@ -211,26 +229,18 @@ async function fetchEmailBatch(gmail, messageIds) {
       const subject = headers.find(h => h.name.toLowerCase() === 'subject')?.value || '';
       const dateStr = headers.find(h => h.name.toLowerCase() === 'date')?.value || '';
 
-      // Get plain text body
-      let bodyPreview = decodeBody(msg.data);
-      // Fallback to HTML stripped of tags (entities decoded, not deleted)
-      if (!bodyPreview) {
-        bodyPreview = stripHtmlToText(getHtmlBody(msg.data.payload));
-      }
-      // Truncate body to keep token usage manageable — but receipts put their
-      // totals at the BOTTOM, so blind truncation systematically hid order
-      // totals and left only the first item's price. Append every price-bearing
-      // snippet from the truncated remainder so Claude always sees the totals.
-      const fullText = bodyPreview;
-      bodyPreview = fullText.substring(0, 800);
-      const rest = fullText.substring(800);
-      if (rest) {
-        const priceSnippets = [...rest.matchAll(/.{0,60}\$\s*[\d,]+\.\d{2}/g)]
-          .map(m => m[0].replace(/\s+/g, ' ').trim())
-          .slice(0, 12);
-        if (priceSnippets.length > 0) {
-          bodyPreview += `\n[AMOUNTS FROM LATER IN THIS EMAIL: ${priceSnippets.join(' | ')}]`;
-        }
+      // Give Claude the WHOLE email, cleaned. Both body representations are
+      // considered and the richer one wins — Airbnb's text/plain part is 64%
+      // tracking URLs, which previously pushed real content (listing names,
+      // order totals) past the truncation point and out of the model's view.
+      const plainBody = cleanEmailBody(decodeBody(msg.data));
+      const htmlBody = cleanEmailBody(stripHtmlToText(getHtmlBody(msg.data.payload)));
+      let bodyPreview = plainBody.length >= htmlBody.length ? plainBody : htmlBody;
+
+      // Generous cap purely as a runaway guard — routine scans analyze only a
+      // handful of emails, so full bodies cost a fraction of a cent.
+      if (bodyPreview.length > MAX_BODY_CHARS) {
+        bodyPreview = bodyPreview.slice(0, MAX_BODY_CHARS) + ' …[truncated]';
       }
 
       emails.push({
