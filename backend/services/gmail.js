@@ -331,17 +331,33 @@ async function mapUtilityToProperty(prisma, propertyKey) {
   return null;
 }
 
+// Convert an HTML email body to plain text.
+// Named entities are DECODED, not deleted — blanket-replacing "&...;" with a
+// space silently corrupted text (e.g. an Airbnb listing name "Mini Fridge &
+// Coffee" became "Mini Fridge Coffee", so its room alias no longer matched).
+function stripHtmlToText(html) {
+  return (html || '')
+    .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
+    .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&amp;/gi, '&')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&quot;/gi, '"')
+    .replace(/&(?:#39|apos|rsquo|lsquo);/gi, "'")
+    .replace(/&(?:#8212|mdash);/gi, '—')
+    .replace(/&(?:#8211|ndash);/gi, '–')
+    .replace(/&[a-z#0-9]+;/gi, ' ') // anything else we don't decode
+    .replace(/\s+/g, ' ');
+}
+
 // Parse Amazon.ca order confirmation email
 function parseAmazonEmail(headers, htmlBody) {
   const subject = headers.find(h => h.name.toLowerCase() === 'subject')?.value || '';
   const dateStr = headers.find(h => h.name.toLowerCase() === 'date')?.value || '';
 
-  // Strip HTML to plain text for parsing
-  const text = htmlBody
-    .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
-    .replace(/<[^>]+>/g, ' ')
-    .replace(/&[a-z#0-9]+;/gi, ' ')
-    .replace(/\s+/g, ' ');
+  const text = stripHtmlToText(htmlBody);
 
   // Extract order total. Multi-item orders are grouped BY SHIPMENT and each
   // shipment block ends with its own "Total $X" — there is no grand total in
@@ -795,5 +811,6 @@ module.exports = {
   getRentMonth,
   buildAfterClause,
   getSenderRules,
+  stripHtmlToText,
   UTILITY_PARSERS,
 };

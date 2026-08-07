@@ -1,5 +1,5 @@
 const Anthropic = require('@anthropic-ai/sdk');
-const { getGmailClient, decodeBody, getHtmlBody, scanGmail, buildAfterClause } = require('./gmail');
+const { getGmailClient, decodeBody, getHtmlBody, scanGmail, buildAfterClause, stripHtmlToText } = require('./gmail');
 const { sendPush } = require('./notify');
 const { autoApproveHighConfidence } = require('./approval');
 
@@ -71,6 +71,7 @@ CLASSIFICATION RULES:
 - Interac e-Transfer SENT (outgoing money, "Your transfer to" or "You've sent X money", from payments.interac.ca) = EXPENSE. Skip these known personal recipients (NOT property expenses): ${skipText}. Outgoing transfers to Airbnb guests (refunds, partial refunds for early checkout) are legitimate property expenses — categorize as "Airbnb".
 - DEPOSIT RETURNS: an outgoing e-Transfer to a CURRENT OR FORMER TENANT (match the recipient against the tenant list, including archived tenants) is most likely a security-deposit return, not an expense. Include it with category "Deposit Return", describe it as "Possible deposit return to <name>", and set matchConfidence "none" so it is held for human review instead of being recorded automatically.
 - AIRBNB PAYOUTS AND ROOMS: there are multiple Airbnb rooms, each a separate tenant (e.g. "Airbnb 01", "Airbnb 02"). Payout emails contain a Details section with the LISTING NAME, e.g. "Home • {dates} {listing name} ({listing id}". Match the listing name against the KNOWN SENDER ALIASES list to pick the room tenant and set its tenantId with matchConfidence "high". If a listing name is present but matches no alias, use matchConfidence "medium".
+- ONLY "We sent a payout of $X" emails represent money actually received from Airbnb. IGNORE the surrounding lifecycle emails for the same money — "{Guest} has accepted your request for money", "Your request was sent", reservation confirmations, and booking reminders. Recording those double-counts the payout that follows.
 - AIRBNB ROOM EXPENSES: for EXPENSES with category "Airbnb" or "Common Airbnb Expenses", if you cannot determine WHICH room the expense belongs to, leave tenantId null and cap matchConfidence at "medium" so a human assigns the room during review. This rule applies ONLY to those two categories.
 - Utility bills (Enmax/Easymax, EPCOR, Shaw) = EXPENSE. Map Enmax to Calgary property, EPCOR to Edmonton property. Shaw: look for account numbers 099-0137-3821 (Edmonton) or 099-0203-0540 (Calgary).
 - Amazon.ca order confirmations = EXPENSE (Home Improvement category). Look for delivery city (Calgary or Edmonton) to map to property.
@@ -212,14 +213,9 @@ async function fetchEmailBatch(gmail, messageIds) {
 
       // Get plain text body
       let bodyPreview = decodeBody(msg.data);
-      // Fallback to HTML stripped of tags
+      // Fallback to HTML stripped of tags (entities decoded, not deleted)
       if (!bodyPreview) {
-        const html = getHtmlBody(msg.data.payload);
-        bodyPreview = html
-          .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
-          .replace(/<[^>]+>/g, ' ')
-          .replace(/&[a-z#0-9]+;/gi, ' ')
-          .replace(/\s+/g, ' ');
+        bodyPreview = stripHtmlToText(getHtmlBody(msg.data.payload));
       }
       // Truncate body to keep token usage manageable — but receipts put their
       // totals at the BOTTOM, so blind truncation systematically hid order
