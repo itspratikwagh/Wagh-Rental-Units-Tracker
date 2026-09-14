@@ -723,8 +723,9 @@ app.put('/api/expenses/:id', async (req, res) => {
         date: new Date(req.body.date),
         category: req.body.category,
         description: req.body.description,
-        // only touch tenantId when the caller sends the field — recurring/chat
-        // update paths that omit it must not null out room attribution
+        // only touch propertyId/tenantId when the caller sends the field —
+        // update paths that omit them must not clear attribution
+        propertyId: req.body.propertyId !== undefined ? req.body.propertyId : undefined,
         tenantId: req.body.tenantId !== undefined ? (req.body.tenantId || null) : undefined,
       },
     });
